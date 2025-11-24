@@ -35,7 +35,7 @@ def generate_launch_description():
             },
             {
                 "image_topics": [
-                    "/zed/front/im_left",
+                    "/realsense/front/im",
                 ]
             },
             {"dataset_name": "test"}
@@ -53,14 +53,14 @@ def generate_launch_description():
         ]
     )
     
-    zed_node = Node(
+    realsense_node = Node(
         package='cameras',
-        executable='zed',
+        executable='realsense',
         name='front',
         output='screen',
         emulate_tty=True,
         parameters=[
-            {"serial": 22176523},
+            {"serial": "023322060631"},
             {"name": "front"},
         ]
     )
@@ -68,5 +68,5 @@ def generate_launch_description():
     return LaunchDescription([
         factr_teleop_franka_right,
         data_record_node,
-        zed_node
+        realsense_node
     ])

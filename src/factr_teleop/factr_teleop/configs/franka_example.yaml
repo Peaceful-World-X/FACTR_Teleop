@@ -1,61 +1,56 @@
-name: right
+name: right  # 配置名称：手臂名称，例如 'left' 或 'right'
 
-dynamixel:
-  # USB port name given by the command: ls /dev/serial/by-id/
-  dynamixel_port: "usb-FTDI_USB__-__Serial_Converter_FT951EJA-if00-port0"
-  # Servo types
-  servo_types: [
-    "XC330_T288_T", "XM430_W210_T", "XC330_T288_T", "XM430_W210_T", 
-    "XC330_T288_T", "XC330_T288_T", "XC330_T288_T", "XC330_T288_T",
-  ]
-  # Servo joint directions to match that of the leader arm
-  joint_signs: [1, 1, 1, -1, 1, -1, 1, -1]
-  
-arm_teleop:
-  # URDF used for creating leader arm dynamics model to compute gravity compensation
-  leader_urdf: "factr_teleop_franka.urdf"
-  num_arm_joints: 7
-  arm_joint_limits_max: [2.8973, 1.7628, 2.8973, -0.8698, 2.8973, 3.7525, 2.8973]
-  arm_joint_limits_min: [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973]
-  arm_joint_limits_safety_margin: 0.1
-  initialization:
+dynamixel:  # Dynamixel 舵机配置部分
+  dynamixel_port: "usb-FTDI_USB__-__Serial_Converter_FTA5H0VZ-if00-port0"  # USB 设备端口名称，用于连接 U2D2 控制器，通过 'ls /dev/serial/by-id/' 获取
+  servo_types: [  # 舵机类型列表，对应每个关节使用的舵机型号
+    "XC330_T288_T", "XM430_W210_T", "XC330_T288_T", "XM430_W210_T",  # 第一行舵机类型
+    "XC330_T288_T", "XC330_T288_T", "XC330_T288_T", "XC330_T288_T",  # 第二行舵机类型
+  ]  # 舵机类型数组结束
+  joint_signs: [1, 1, 1, -1, 1, -1, 1, -1]  # 关节方向符号，1 为正方向，-1 为反向，用于匹配 leader arm 的运动方向
+
+arm_teleop:  # 机械臂遥操作配置部分
+  leader_urdf: "factr_teleop_franka.urdf"  # Leader arm 的 URDF 文件，用于创建动力学模型计算重力补偿
+  num_arm_joints: 7  # 机械臂关节数量
+  arm_joint_limits_max: [2.8973, 1.7628, 2.8973, -0.8698, 2.8973, 3.7525, 2.8973]  # 各关节的最大角度限制（弧度）
+  arm_joint_limits_min: [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973]  # 各关节的最小角度限制（弧度）
+  arm_joint_limits_safety_margin: 0.1  # 关节限位安全边距（弧度），用于避免达到硬限位
+  initialization:  # 初始化配置子部分
     # The expected leader arm joint position before launching the script
-    calibration_joint_pos: [0.0, -0.7854, 0.0, -2.356, 0.0, 1.57, 0.0]
+    calibration_joint_pos: [0, 0, 0, -1.57, 0, 1.57, 1.57]  # 校准位置：启动前 leader arm 应该放置的关节位置（弧度），用于校准舵机偏移
     # The leader arm must be brought to this joint position before the follower starts mirroring the leader
-    initial_match_joint_pos: [0.0, -0.7854, 0.0, -2.356, 0.0, 1.57, 0.0]
+    initial_match_joint_pos: [0, 0, 0, -1.57, 0, 1.57, 1.57]  # 初始开始控制的关节角度（偏移后的）， follower arm 对齐
   
-gripper_teleop:
-  # The maximum range (in rad) of the leader gripper trigger
-  actuation_range: 0.8
+gripper_teleop:  # 夹爪遥操作配置部分
+  actuation_range: 0.8  # 夹爪触发器的最大活动范围（弧度）
 
-controller:
-  frequency: 500
-  torque_feedback:
-    enable: True
-    gain: 3.0
-    damping: 0.0
-    motor_scalar: 94.5652173913
-  gravity_comp:
-    enable: True
-    gain: 0.85
-  null_space_regulation:
-    null_space_joint_target: [0.0, -0.7854, 0.0, -2.356, 0.0, 1.57, 0.0, 0.0]
-    kp: 0.1
-    kd: 0.01
-  static_friction_comp:
-    enable_speed: 0.9
-    gain: 0.6
-  joint_limit_barrier:
-    kp: 1.03561658022
-    kd: 0.04315069084
-  joint_position_control:
-    interpolation_step_size: 0.5
-    kp: 1.03561658022
-    kd: 0.04315069084
+controller:  # 控制器配置部分
+  frequency: 500  # 控制循环频率（Hz），500Hz 表示每秒执行 500 次控制循环
+  torque_feedback:  # 力矩反馈配置子部分
+    enable: True  # 是否启用力矩反馈（True=启用，False=禁用）
+    gain: 3.0  # 力矩反馈增益系数
+    damping: 0.0  # 力矩反馈阻尼系数
+    motor_scalar: 94.5652173913  # 电机标量，用于力矩单位转换
+  gravity_comp:  # 重力补偿配置子部分
+    enable: True  # 是否启用重力补偿（True=启用，False=禁用）
+    gain: 0.99  # 重力补偿增益，值越大补偿越强，可调节以优化重力补偿效果
+  null_space_regulation:  # 零空间调节配置子部分
+    null_space_joint_target: [0, 0, 0, -1.57, 0, 1.57, 1.57, 0.0]  # 零空间目标关节位置（弧度），用于在冗余空间中调节姿态
+    kp: 0.1  # 零空间位置控制比例增益
+    kd: 0.01  # 零空间速度控制微分增益
+  static_friction_comp:  # 静摩擦补偿配置子部分
+    enable_speed: 0.9  # 启用静摩擦补偿的速度阈值
+    gain: 0.6  # 静摩擦补偿增益
+  joint_limit_barrier:  # 关节限位屏障配置子部分，用于防止关节超出限制
+    kp: 1.03561658022  # 关节限位位置控制比例增益
+    kd: 0.04315069084  # 关节限位速度控制微分增益
+  joint_position_control:  # 关节位置控制配置子部分
+    interpolation_step_size: 0.5  # 插值步长，用于平滑位置控制
+    kp: 1.03561658022  # 关节位置控制比例增益
+    kd: 0.04315069084  # 关节速度控制微分增益
 
-  gripper_feedback:
-    enable: True
-    gain: 0.28328611898
-    ema_beta: 0.95
+  gripper_feedback:  # 夹爪反馈配置子部分
+    enable: True  # 是否启用夹爪力反馈（True=启用，False=禁用）
+    gain: 0.28328611898  # 夹爪反馈增益系数
+    ema_beta: 0.95  # 指数移动平均 beta 值，用于平滑夹爪反馈信号
 
 

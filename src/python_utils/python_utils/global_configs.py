@@ -16,9 +16,9 @@
 # limitations under the License.
 # ---------------------------------------------------------------------------
 
-sim_desktop_ip_address = "172.16.0.9"
-franka_left_ip_address = "172.16.0.1"
-franka_right_ip_address = "172.16.0.3"
+sim_desktop_ip_address = "192.168.40.200"  # 修改为当前系统的 IP 地址
+franka_left_ip_address = "172.16.0.1"  # Franka 左侧机械臂的 IP 地址（如果使用）
+franka_right_ip_address = "10.0.10.2"  # Franka 右侧机械臂的 IP 地址（如果使用）
 
 
 franka_right_real_zmq_addresses = {

@@ -42,20 +42,20 @@ def generate_launch_description():
         ]
     )
     
-    zed_node = Node(
+    realsense_node = Node(
         package='cameras',
-        executable='zed',
-        name='front',
+        executable='realsense',
+        name='wrist',
         output='screen',
         emulate_tty=True,
         parameters=[
-            {"serial": 22176523},
-            {"name": "front"},
+            {"serial": "419122270824"},
+            {"name": "wrist"},
         ]
     )
     
     return LaunchDescription([
         franka_bridge_node,
-        zed_node,
+        realsense_node,
         policy_rollout_node,
     ])
