@@ -31,10 +31,13 @@ If you have not installed ROS 2 yet, follow the official [ROS 2 installation gui
 
 The following ROS 2 packages are included in this repository:
 
-- `factr_teleop`
-- `bc`
-- `cameras`
-- `python_utils`
+- **`factr_teleop`**: Core teleoperation package implementing the FACTR low-cost force-feedback teleoperation system. Provides leader arm control with gravity compensation, null-space regulation, friction compensation, and force-feedback capabilities.
+
+- **`bc`**: Behavior Cloning package for data collection and policy rollout. Includes nodes for recording teleoperation data, synchronizing data streams, replaying trajectories, and deploying trained policies.
+
+- **`cameras`**: Camera interface package providing ROS 2 nodes for running cameras (ZED and RealSense) used during teleoperation and data collection.
+
+- **`python_utils`**: Python utility functions package containing common utilities such as ZMQ messaging, global configurations, and helper functions used across other packages.
 
 These packages are located in:
 

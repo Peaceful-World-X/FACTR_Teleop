@@ -180,6 +180,52 @@ sudo apt install ros-foxy-pinocchio
 pip install --user pin
 ```
 
+### 问题 5: `PackageNotFoundError: "package 'factr_teleop' not found"`
+
+**错误信息**：
+```
+ament_index_python.packages.PackageNotFoundError: "package 'factr_teleop' not found, searching: ['/opt/ros/foxy']"
+```
+
+**原因**：工作空间没有被正确 source，系统只在 ROS 2 系统目录中搜索包，而没有在工作空间的 `install` 目录中搜索。
+
+**解决方案**：
+
+1. **确保已构建工作空间**：
+   ```bash
+   cd /home/cytoderm/projects/FACTR_Teleop
+   colcon build --symlink-install
+   ```
+
+2. **在运行任何 ROS 2 命令前，必须 source 环境**：
+   ```bash
+   source /opt/ros/foxy/setup.bash
+   source install/local_setup.bash
+   ```
+
+3. **验证包是否可用**：
+   ```bash
+   ros2 pkg list | grep factr
+   ```
+   应该看到：`factr_teleop`、`bc`、`cameras`、`python_utils`
+
+4. **每次打开新终端都需要重新 source**。为了方便，可以创建并 source 启动脚本：
+   ```bash
+   # 创建脚本
+   cat > setup_env.sh << 'EOF'
+   #!/bin/bash
+   source /opt/ros/foxy/setup.bash
+   source $(dirname "$0")/install/local_setup.bash
+   EOF
+   
+   chmod +x setup_env.sh
+   
+   # 使用
+   source setup_env.sh
+   ```
+
+**注意**：如果使用 IDE 或编辑器运行 Python 脚本，确保在运行前已经 source 了工作空间，或者在脚本中设置正确的环境变量。
+
 ## 下一步
 
 初始化完成后，您可以：
