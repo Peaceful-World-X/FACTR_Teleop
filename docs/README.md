@@ -70,7 +70,7 @@ python3 scripts/test_franka_comm.py --test torque     # 力矩接收
 sim_desktop_ip_address = "192.168.40.200"
 
 # Franka 控制端 IP（运行 FCI 程序的计算机）
-franka_right_ip_address = "10.0.10.1"
+franka_right_ip_address = "10.0.10.2"
 franka_left_ip_address = "172.16.0.1"
 ```
 

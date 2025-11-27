@@ -521,7 +521,7 @@ sudo ufw allow 4098/tcp
 
 ```python
 sim_desktop_ip_address = "192.168.40.200"  # 您的工作站 IP
-franka_right_ip_address = "10.0.10.1"      # Franka 控制端 IP
+franka_right_ip_address = "10.0.10.2"      # Franka 控制端 IP
 ```
 
 2. **重新构建工作空间**:
