@@ -28,7 +28,7 @@ class ZMQSubscriber:
     def __init__(self, ip_address="tcp://192.168.1.3:2096", verbose=False):
         context = zmq.Context()
         self._sub_socket = context.socket(zmq.SUB)
-        self._sub_socket.setsockopt(zmq.CONFLATE, False)
+        self._sub_socket.setsockopt(zmq.CONFLATE, True)
         self._sub_socket.connect(ip_address)
         self._sub_socket.setsockopt(zmq.SUBSCRIBE, b'')
 
