@@ -49,7 +49,26 @@ class ZMQSubscriber:
     def _update_value(self):
         while(True):
             message = self._sub_socket.recv()
-            self._value = np.frombuffer(message).astype(np.float32)
+            mlen = len(message)
+            try:
+                if mlen % 8 == 0:
+                    arr = np.frombuffer(message, dtype=np.float64)
+                    if self.verbose:
+                        print(f"[ZMQSubscriber] Received {mlen} bytes -> parsed as float64 ({arr.shape})")
+                elif mlen % 4 == 0:
+                    arr = np.frombuffer(message, dtype=np.float32)
+                    if self.verbose:
+                        print(f"[ZMQSubscriber] Received {mlen} bytes -> parsed as float32 ({arr.shape})")
+                else:
+                    arr = np.frombuffer(message, dtype=np.uint8)
+                    if self.verbose:
+                        print(f"[ZMQSubscriber] Received {mlen} bytes -> parsed as uint8 ({arr.shape})")
+
+                self._value = arr
+            except Exception as e:
+                if self.verbose:
+                    print(f"[ZMQSubscriber] Failed to parse message of length {mlen}: {e}")
+                self._value = None
 
 
 class ZMQPublisher:

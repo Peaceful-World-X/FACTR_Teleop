@@ -17,14 +17,15 @@
 # ---------------------------------------------------------------------------
 
 #sim_desktop_ip_address = "192.168.20.115"  # 修改为当前系统的 IP 地址
-sim_desktop_ip_address = "127.0.0.1 " #本地测试使用localhost
+sim_desktop_ip_address = "127.0.0.1"  # 本地测试使用 localhost（FACTR 和 Franka 在同一台电脑）
 franka_left_ip_address = "172.16.0.1"  # Franka 左侧机械臂的 IP 地址（如果使用）
-franka_right_ip_address = "10.0.10.2"  # Franka 右侧机械臂的 IP 地址（如果使用）
+franka_right_ip_address = "10.0.10.2"  # Franka 右侧机械臂的 IP 地址（用于连接机器人，ZMQ 通信使用 127.0.0.1）
 
 
 franka_right_real_zmq_addresses = {
-    "joint_state_sub":  f"tcp://{franka_right_ip_address}:3099",
-    "joint_torque_sub": f"tcp://{franka_right_ip_address}:3087",
+    # 本地运行：桥接程序绑定到 127.0.0.1，所以这里也要连接到 127.0.0.1
+    "joint_state_sub":  "tcp://127.0.0.1:3099",
+    "joint_torque_sub": "tcp://127.0.0.1:3087",
     "joint_pos_cmd_pub": f"tcp://{sim_desktop_ip_address}:2098",
 
 }

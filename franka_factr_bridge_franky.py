@@ -22,9 +22,11 @@ except ImportError as e:
 
 # ================= 配置参数 =================
 ROBOT_IP = "10.0.10.2"          # Franka 机器人 IP
-CMD_SUB_ADDRESS = "tcp://192.168.40.200:2098"   # 接收 FACTR 命令 (SUB)
-STATE_PUB_ADDRESS = "tcp://*:3099"              # 发布状态 (PUB)
-TORQUE_PUB_ADDRESS = "tcp://*:3087"             # 发布力矩 (PUB)
+
+# 本地运行配置（FACTR 和 Franka 程序在同一台电脑）
+CMD_SUB_ADDRESS = "tcp://127.0.0.1:2098"   # 接收 FACTR 命令 (SUB) - 连接到本地
+STATE_PUB_ADDRESS = "tcp://127.0.0.1:3099"  # 发布状态 (PUB) - 绑定到本地
+TORQUE_PUB_ADDRESS = "tcp://127.0.0.1:3087"  # 发布力矩 (PUB) - 绑定到本地
 
 # 初始位置 (用于启动时归位)
 INITIAL_POSITION = np.array([
@@ -47,6 +49,10 @@ class FrankaFactrBridge:
         self.cmd_subscriber = None
         self.state_publisher = None
         self.torque_publisher = None
+        # 运行时统计计数器（用于调试/可观测性）
+        self.state_pub_count = 0
+        self.torque_pub_count = 0
+        self.cmd_recv_count = 0
         
         # 共享锁（仅用于保护非原子操作，但在异步架构中依赖较少）
         self.lock = threading.Lock()
@@ -73,13 +79,17 @@ class FrankaFactrBridge:
         
         print(f"[ZMQ] Connected to CMD: {CMD_SUB_ADDRESS}")
         print(f"[ZMQ] Bound PUBs: State={STATE_PUB_ADDRESS}, Torque={TORQUE_PUB_ADDRESS}")
-        time.sleep(0.5)
+        # ZMQ PUB-SUB 模式需要等待连接建立，建议等待 1-2 秒
+        print("[ZMQ] Waiting for subscribers to connect...")
+        time.sleep(2.0)
+        print("[ZMQ] Ready to publish state and torque data.")
 
     def state_publisher_loop(self):
         """
         后台线程：以固定频率读取并发布机器人状态
         """
         print("[Pub Thread] Started")
+        last_stats_time = time.time()
         while self.running and self.robot:
             try:
                 start_time = time.time()
@@ -110,19 +120,29 @@ class FrankaFactrBridge:
                     tau = np.zeros(7)
 
                 # --- 3. 发送 ZMQ ---
+                # 注意：为节省带宽，桥端改为发送 float32（FACTR 端需相应解析为 float32）
                 # 状态: 14个 float32 (7 pos + 7 vel)
                 state_msg = np.concatenate([q, dq]).astype(np.float32)
                 self.state_publisher.send(state_msg.tobytes(), zmq.NOBLOCK)
-                
+                self.state_pub_count += 1
+
                 # 力矩: 7个 float32
                 torque_msg = tau.astype(np.float32)
                 self.torque_publisher.send(torque_msg.tobytes(), zmq.NOBLOCK)
+                self.torque_pub_count += 1
                 
                 # --- 4. 频率控制 ---
                 elapsed = time.time() - start_time
                 sleep_time = (1.0 / STATE_PUB_FREQUENCY) - elapsed
                 if sleep_time > 0:
                     time.sleep(sleep_time)
+                # 周期性打印统计（每 5 秒）以便远程观察
+                if time.time() - last_stats_time > 5.0:
+                    try:
+                        print(f"[Pub Thread] stats: state_pub_count={self.state_pub_count}, torque_pub_count={self.torque_pub_count}, cmd_recv_count={self.cmd_recv_count}")
+                    except Exception:
+                        pass
+                    last_stats_time = time.time()
                     
             except Exception as e:
                 # 状态发布错误不应中断主程序，打印即可
@@ -238,8 +258,11 @@ class FrankaFactrBridge:
         self.running = True
 
         # 3. 启动状态发布线程 (Daemon)
+        # 注意：状态发布线程会在机器人连接后立即开始发布数据
         pub_thread = threading.Thread(target=self.state_publisher_loop, daemon=True)
         pub_thread.start()
+        print("[Main] State publisher thread started. Waiting for robot to be ready...")
+        time.sleep(0.5)  # 给发布线程一点时间开始运行
 
         # 4. 进入主控制循环 (Blocking)
         try:
