@@ -22,6 +22,7 @@ setup(
         'console_scripts': [
             'factr_teleop_franka = factr_teleop.factr_teleop_franka_zmq:main',
             'factr_teleop_grav_comp_demo = factr_teleop.factr_teleop_grav_comp_demo:main',
+            'gripper_bridge_node = factr_teleop.gripper_bridge_node:main',
         ],
     },
 )

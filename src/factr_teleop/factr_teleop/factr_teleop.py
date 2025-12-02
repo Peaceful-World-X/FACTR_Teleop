@@ -30,8 +30,10 @@ from factr_teleop.dynamixel.driver import DynamixelDriver
 
 
 def find_ttyusb(port_name):
-    """
-    This function is used to locate the underlying ttyUSB device.
+    """查找底层的 ttyUSB 设备。
+
+    给定在配置中使用的设备名（例如由 /dev/serial/by-id 提供的符号链接名），
+    返回实际的 ttyUSB 设备名（例如 "ttyUSB0"）。如果找不到或解析失败，抛出异常并给出详细信息。
     """
     base_path = "/dev/serial/by-id/"
     full_path = os.path.join(base_path, port_name)
@@ -51,17 +53,10 @@ def find_ttyusb(port_name):
 
 
 class FACTRTeleop(Node, ABC):
-    """
-    Base class for implementing the FACTR low-cost force-feedback teleoperation system 
-    for a follower arm.
+    """FACTR 遥操作基类（leader 侧），用于实现力反馈远程控制。
 
-    This class implements the control loop for the leader teleoperation arm, including
-    features such as gravity compensation, null-space regulation, friction compensation,
-    and force-feedback.
-
-    Note that this class should be used as a parent class, where the defined abstract 
-    methods must be implemented by subclasses for handling communication between the 
-    leader and follower arms, as well as force-feedback for the leader gripper.
+    该类实现了 leader 侧机器人的主控制循环，包含重力补偿、空域（null-space）调节、摩擦补偿以及力反馈等功能。
+    作为基类使用时，子类需要实现抽象方法以建立 leader 与 follower（例如 Franka）之间的通信，以及提供夹爪的力反馈处理。
     """
     def __init__(self):
         super().__init__('factr_teleop')
@@ -77,7 +72,7 @@ class FACTRTeleop(Node, ABC):
         self._prepare_dynamixel()
         self._prepare_inverse_dynamics()
 
-        # leader arm parameters
+    # leader 机械臂相关参数
         self.num_arm_joints = self.config["arm_teleop"]["num_arm_joints"]
         self.safety_margin = self.config["arm_teleop"]["arm_joint_limits_safety_margin"]
         self.arm_joint_limits_max = np.array(self.config["arm_teleop"]["arm_joint_limits_max"]) - self.safety_margin
@@ -89,36 +84,36 @@ class FACTRTeleop(Node, ABC):
         assert self.num_arm_joints == len(self.calibration_joint_pos) == len(self.initial_match_joint_pos), \
             "num_arm_joints and the length of calibration_joint_pos and initial_match_joint_pos must be the same"
         
-        # leader gripper parameters
+    # leader 夹爪相关参数
         self.gripper_limit_min = 0.0
         self.gripper_limit_max = self.config["gripper_teleop"]["actuation_range"]
         self.gripper_pos_prev = 0.0
         self.gripper_pos = 0.0
 
-        # gravity comp
+    # 重力补偿相关
         self.enable_gravity_comp = self.config["controller"]["gravity_comp"]["enable"]
         self.gravity_comp_modifier = self.config["controller"]["gravity_comp"]["gain"]
         self.tau_g = np.zeros(self.num_arm_joints)
-        # friction comp
+    # 摩擦补偿相关
         self.stiction_comp_enable_speed = self.config["controller"]["static_friction_comp"]["enable_speed"]
         self.stiction_comp_gain = self.config["controller"]["static_friction_comp"]["gain"]
         self.stiction_dither_flag = np.ones((self.num_arm_joints), dtype=bool)
-        # joint limit barrier:
+    # 关节极限保护（障碍势）
         self.joint_limit_kp = self.config["controller"]["joint_limit_barrier"]["kp"]
         self.joint_limit_kd = self.config["controller"]["joint_limit_barrier"]["kd"]
-        # null space regulation
+    # 空间（null-space）调节相关
         self.null_space_joint_target = np.array(self.config["controller"]["null_space_regulation"]["null_space_joint_target"])
         self.null_space_kp = self.config["controller"]["null_space_regulation"]["kp"]
         self.null_space_kd = self.config["controller"]["null_space_regulation"]["kd"]
-        # torque feedback
+    # 力矩反馈相关
         self.enable_torque_feedback = self.config["controller"]["torque_feedback"]["enable"]
         self.torque_feedback_gain = self.config["controller"]["torque_feedback"]["gain"]
         self.torque_feedback_motor_scalar = self.config["controller"]["torque_feedback"]["motor_scalar"]
         self.torque_feedback_damping = self.config["controller"]["torque_feedback"]["damping"]
-        # gripper feedback
+    # 夹爪反馈相关
         self.enable_gripper_feedback = self.config["controller"]["gripper_feedback"]["enable"]
         
-        # needs to be implemented to establish communication between the leader and the follower
+        # 下面方法需要在子类中实现，用于建立 leader 与 follower 之间的通信
         self.set_up_communication()
 
         # calibrate the leader arm joints before starting
@@ -130,8 +125,10 @@ class FACTRTeleop(Node, ABC):
 
 
     def _prepare_dynamixel(self):
-        """
-        Instantiates driver for interfacing with Dynamixel servos.
+        """初始化并配置用于控制 Dynamixel 舵机的驱动。
+
+        会检查串口延迟计时器是否满足实时控制要求，并将电机设置为扭矩模式。
+        如果串口设备不存在则记录并返回。
         """
         self.servo_types = self.config["dynamixel"]["servo_types"]
         self.num_motors = len(self.servo_types)
@@ -140,11 +137,10 @@ class FACTRTeleop(Node, ABC):
             "The number of motors and the number of joint signs must be the same"
         self.dynamixel_port = "/dev/serial/by-id/" + self.config["dynamixel"]["dynamixel_port"]
 
-        # checks of the latency timer on ttyUSB of the corresponding port is 1
-        # if it is not 1, the control loop cannot run at above 200 Hz, which will 
-        # cause extremely undesirable behaviour for the leader arm. If the latency 
-        # timer is not 1, one can set it to 1 as follows:
-        # echo 1 | sudo tee /sys/bus/usb-serial/devices/ttyUSB{NUM}/latency_timer
+    # 检查对应 ttyUSB 设备的 latency_timer 是否为 1
+    # 如果不是 1，则无法保证控制循环在 200Hz 以上稳定运行，可能导致不良行为。
+    # 如需设置为 1，可运行：
+    # echo 1 | sudo tee /sys/bus/usb-serial/devices/ttyUSB{NUM}/latency_timer
         ttyUSBx = find_ttyusb(self.dynamixel_port)
         command = f"cat /sys/bus/usb-serial/devices/{ttyUSBx}/latency_timer"        
         result = subprocess.run(command, shell=True, capture_output=True, text=True, check=True)
@@ -170,10 +166,7 @@ class FACTRTeleop(Node, ABC):
         self.driver.set_torque_mode(True)
 
     def _prepare_inverse_dynamics(self):
-        """
-        Creates a model of the leader arm given the its URDF for kinematic and dynamic
-        computations used in gravity compensation and null-space regulation calculations.
-        """
+        """基于 URDF 构建 leader 机械臂的动力学模型，用于重力补偿与空域调节的计算。"""
         self.leader_urdf = os.path.join(
             'src/factr_teleop/factr_teleop/urdf/', 
             self.config["arm_teleop"]["leader_urdf"]
@@ -185,15 +178,11 @@ class FACTRTeleop(Node, ABC):
         self.pin_data = self.pin_model.createData()
 
     def _get_dynamixel_offsets(self, verbose=True):
-        """
-        Calibrates the Dynamixel servos with respect to the Franka arm to ensure the joint
-        position readings of the leader arm correspond to those of the follower arm.
+        """校准 Dynamixel 与 Franka 之间的角度偏移，使 leader 读取与 follower 对齐。
 
-        Before launching this program, the leader arm should be manually placed in a 
-        configuration roughly corresponding to the follower's calibration position 
-        described in self.calibration_joint_pos (within ±90 degrees per joint).
+        启动前应手动将 leader 机械臂移动到与 follower 的校准位置大致一致的位置（每关节 ±90° 范围内）。
         """
-        # warm up
+    # 预热读取舵机状态
         for _ in range(10):
             self.driver.get_positions_and_velocities()
         
@@ -203,7 +192,7 @@ class FACTRTeleop(Node, ABC):
             start_i = calibration_joint_pos[index]
             return np.abs(joint_i - start_i)
 
-        # get arm offsets
+    # 计算每个关节的偏移量
         self.joint_offsets = []
         curr_joints, _ = self.driver.get_positions_and_velocities()
         for i in range(self.num_arm_joints):
@@ -217,25 +206,22 @@ class FACTRTeleop(Node, ABC):
                     best_offset = offset
             self.joint_offsets.append(best_offset)
 
-        # get gripper offset:
+    # 计算夹爪的偏移
         curr_gripper_joint = curr_joints[-1]
         self.joint_offsets.append(curr_gripper_joint)
 
         self.joint_offsets = np.asarray(self.joint_offsets)
         if verbose:
             print(self.joint_offsets)
-            print("best offsets               : ", [f"{x:.3f}" for x in self.joint_offsets])
+            print("最佳偏移 (rad)             : ", [f"{x:.3f}" for x in self.joint_offsets])
             print(
-                "best offsets function of pi: ["
-                + ", ".join([f"{int(np.round(x/(np.pi/2)))}*np.pi/2" for x in self.joint_offsets])
+                "以 π/2 为单位的近似偏移: ["
+                + ", ".join([f"{int(np.round(x/(np.pi/2)))}*π/2" for x in self.joint_offsets])
                 + " ]",
             )
     
     def _match_start_pos(self):
-        """
-        Waits until the leader arm is manually moved to roughly the same configuration as the 
-        follower arm before the follower arm starts mirroring the leader arm. 
-        """
+        """等待用户将 leader 机械臂手动移动到与 follower 大致相同的起始位姿，保证启动时两臂一致。"""
         curr_pos, _, _, _ = self.get_leader_joint_states()
         while (np.linalg.norm(curr_pos - self.initial_match_joint_pos[0:self.num_arm_joints]) > 0.6):
             current_joint_error = np.linalg.norm(
@@ -246,20 +232,15 @@ class FACTRTeleop(Node, ABC):
             )
             curr_pos, _, _, _ = self.get_leader_joint_states()
             time.sleep(0.5)
-        self.get_logger().info(f"FACTR TELEOP {self.name}: Initial joint position matched.")
+        self.get_logger().info(f"FACTR TELEOP {self.name}: 起始关节位置匹配完成。")
 
     def shut_down(self):
-        """
-        Disables all torque on the leader arm and gripper during node shutdown.
-        """
+        """节点关闭时，禁用 leader 机械臂与夹爪的扭矩输出。"""
         self.set_leader_joint_torque(np.zeros(self.num_arm_joints), 0.0)
         self.driver.set_torque_mode(False)
 
     def get_leader_joint_states(self):
-        """
-        Returns the current joint positions and velocities of the leader arm and gripper,
-        aligned with the joint conventions (range and direction) of the follower arm.
-        """
+        """返回 leader 机械臂与夹爪当前的关节位置与速度，按 follower 的关节约定进行对齐。"""
         self.gripper_pos_prev = self.gripper_pos
         joint_pos, joint_vel = self.driver.get_positions_and_velocities()
         joint_pos_arm = (
@@ -272,16 +253,11 @@ class FACTRTeleop(Node, ABC):
         return joint_pos_arm, joint_vel_arm, self.gripper_pos, gripper_vel
     
     def set_leader_joint_pos(self, goal_joint_pos, goal_gripper_pos):
-        """
-        Moves the leader arm and gripper to a specified joint configuration using a PD control loop.
-        This method is useful for aligning the leader arm with a desired configuration, such as 
-        matching the follower arm's configuration. It interpolates the motion toward the target 
-        position and applies torque commands based on a PD controller.
+        """使用 PD 控制将 leader 机械臂与夹爪移动到指定的关节目标位姿。
 
-        **Note:** This function is not used by default in the main teleoperation loop. To ensure 
-        controller stability, please ensure the latency of Dynamixel servos is minimized such
-        that the control loop frequency is at least 200 Hz. Otherwise, the PD controller tuning 
-        is unstable for low control frequencies.
+        该方法通过插值步进逼近目标位置并基于 PD 控制计算扭矩，用于对齐起始位姿或做慢速校正。
+
+        注意：该函数默认不在主遥操作循环中使用。为保证稳定性，Dynamixel 的 latency 必须足够低（建议 200 Hz 以上）。
         """
         interpolation_step_size = np.ones(7)*self.config["controller"]["interpolation_step_size"]
         kp = self.config["controller"]["joint_position_control"]["kp"]
@@ -300,22 +276,15 @@ class FACTRTeleop(Node, ABC):
             curr_pos, curr_vel, curr_gripper_pos, curr_gripper_vel = self.get_leader_joint_states()
     
     def set_leader_joint_torque(self, arm_torque, gripper_torque):
-        """
-        Applies torque to the leader arm and gripper.
-        """
+        """对 leader 机械臂与夹爪施加关节扭矩。"""
         arm_gripper_torque = np.append(arm_torque, gripper_torque)
         self.driver.set_torque(arm_gripper_torque*self.joint_signs)
 
 
     def joint_limit_barrier(self, arm_joint_pos, arm_joint_vel, gripper_joint_pos, gripper_joint_vel):
-        """
-        Computes joint limit repulsive torque to prevent the leader arm and gripper from 
-        exceeding the physical joint limits of the follower arm.
+        """计算关节极限的斥力扭矩，防止 leader 越过 follower 的物理关节限制。
 
-        This method implements a simplified control law compared to the one described in 
-        Section IX.B of the paper, while achieving the same protective effect. It applies 
-        repulsive torques proportional to the distance from the joint limits and the joint 
-        velocity when limits are approached or exceeded.
+        实现了一个简化的控制律：当接近或超过边界时施加与距离和速度成比例的斥力扭矩以保护机械臂。
         """
         exceed_max_mask = arm_joint_pos > self.arm_joint_limits_max
         tau_l = (-self.joint_limit_kp * (arm_joint_pos - self.arm_joint_limits_max) \
@@ -335,16 +304,7 @@ class FACTRTeleop(Node, ABC):
         return tau_l, tau_l_gripper
 
     def gravity_compensation(self, arm_joint_pos, arm_joint_vel):
-        """
-        Computes joint torque for gravity compensation using inverse dynamics.
-        This method uses the Recursive Newton-Euler Algorithm (RNEA), provided by the 
-        Pinocchio library, to calculate the torques required to counteract gravity 
-        at the current joint states. The result is scaled by a modifier to tune the 
-        compensation strength.
-
-        This implementation corresponds to the gravity compensation strategy 
-        described in Section III.C of the paper.
-        """
+        """使用逆动力学（RNEA）计算重力补偿扭矩，并按比例因子调整补偿强度。"""
         self.tau_g = pin.rnea(
             self.pin_model, self.pin_data, 
             arm_joint_pos, arm_joint_vel, np.zeros_like(arm_joint_vel)
@@ -353,13 +313,9 @@ class FACTRTeleop(Node, ABC):
         return self.tau_g
 
     def friction_compensation(self, arm_joint_vel):
-        """
-        Compute joint torques to compensate for static friction during teleoperation.
+        """计算用于补偿静摩擦的关节扭矩。
 
-        This method implements static friction compensation as described in Equation 7,
-        Section IX.A of the paper. It omits kinetic friction compensation, which was 
-        necessary in earlier hardware versions to achieve smooth teleoperation, but has 
-        since become unnecessary due to hardware improvements, such as weight reduction. 
+        该实现只包含静摩擦补偿（用于抵消舵机静态摩擦），不包含动摩擦补偿。
         """
         tau_ss = np.zeros(self.num_arm_joints)
         for i in range(self.num_arm_joints):
@@ -372,16 +328,7 @@ class FACTRTeleop(Node, ABC):
         return tau_ss
     
     def null_space_regulation(self, arm_joint_pos, arm_joint_vel):
-        """
-        Computes joint torques to perform null-space regulation for redundancy resolution 
-        of the leader arm.
-
-        This method enables the specification of a desired null-space joint configuration 
-        via `self.null_space_joint_target`. It implements the control strategy described 
-        in Equation 3 of Section III.B in the paper, projecting a PD control law into 
-        the null space of the task Jacobian to achieve secondary objectives without 
-        affecting the primary task.
-        """
+        """计算用于空域调节的关节扭矩，以在冗余情形下实现次要目标（不影响主要任务）。"""
         J = pin.computeJointJacobian(
             self.pin_model, self.pin_data, arm_joint_pos, self.num_arm_joints
         )
@@ -392,25 +339,16 @@ class FACTRTeleop(Node, ABC):
         return tau_n
     
     def torque_feedback(self, external_torque, arm_joint_vel):
-        """
-        Computes joint torque for the leader arm to achieve force-feedback based on
-        the external joint torque from the follower arm.
-
-        This method implements Equation 1 in Section III.A of the paper.
-        """
+        """根据 follower 端的外部关节力矩计算 leader 侧的力反馈扭矩。"""
         tau_ff = -1.0*self.torque_feedback_gain/self.torque_feedback_motor_scalar * external_torque
         tau_ff -= self.torque_feedback_damping*arm_joint_vel
         return tau_ff
 
     def control_loop_callback(self):
-        """
-        Runs the main control loop of the leader arm. 
+        """leader 侧主控制循环。
 
-        Note that while the control loop can run at up to 500 Hz, lower frequencies 
-        such as 200 Hz can still yield comparable performance, although they may 
-        require additional tuning of control parameters. For Dynamixel servos to 
-        support a 500 Hz control frequency, ensure that the Baud Rate is set to 4 Mbps 
-        and the Return Delay Time is set to 0 using the Dynamixel Wizard software.
+        说明：控制循环最高可运行到 500 Hz，但较低频率（例如 200 Hz）在适当调参下仍可获得良好表现。
+        要支持 500 Hz，需将 Dynamixel 波特率设置为 4 Mbps 且 Return Delay Time 置为 0。
         """
         leader_arm_pos, leader_arm_vel, leader_gripper_pos, leader_gripper_vel = self.get_leader_joint_states()
 
@@ -439,94 +377,35 @@ class FACTRTeleop(Node, ABC):
 
     @abstractmethod
     def set_up_communication(self):
-        """
-        This method should be implemented to set up communication between the leader arm
-        and the follower arm for bilateral teleoperation. This method is called once
-        in the __init__ method.
-        
-        For example, a subscriber can  be set up to receive external joint torque from 
-        the leader arm and a publisher can be set up to send joint position target commands 
-        to the follower arm. Publishers and subscribers can also be set up to record
-        the follower arm's joint states
+        """在子类中实现：用于初始化 leader 与 follower 之间的通信（仅在构造时调用一次）。
 
-        Raises:
-            NotImplementedError: If the method is not implemented in a subclass.
+        例如：可以创建用于接收 follower 外部力矩的订阅器，以及用于发送位置目标的发布器等。
         """
         pass
 
 
     @abstractmethod
     def get_leader_arm_external_joint_torque(self):
-        """
-        This method should retrieve the current external joint torque from the follower arm.
-        This is used to compute force-feedback in the leader arm. This method is called at
-        every iteration of the control loop if self.enable_torque_feedback is set to True.
-
-        Returns:
-            np.ndarray: A NumPy array of shape (num_arm_joints,) containing the external 
-            joint torques. 
-
-        Raises:
-            NotImplementedError: If the method is not implemented in a subclass.
-        """
+        """在子类中实现：获取 follower 端的外部关节力矩，用于 leader 侧的力反馈计算。"""
         pass
 
 
     @abstractmethod
     def get_leader_gripper_feedback(self):
-        """
-        This method should retrieve any data from the follower gripper that might be required
-        to achieve force-feedback in the leader gripper. For example, this method can be used
-        to get the current position of the follower gripper for position-position force-feedback
-        or the current force of the follower gripper for position-force force-feedback in the
-        leader gripper. This method is called at every iteration of the control loop if 
-        self.enable_gripper_feedback is set to True.
-
-        Returns:
-            Any: Feedback data required by the leader gripper. This can be a NumPy array, a 
-            scalar, or any other data type depending on the implementation.
-
-        Raises:
-            NotImplementedError: If the method is not implemented in a subclass.
-        """
+        """在子类中实现：获取 follower 夹爪的反馈数据（例如位置或力），用于 leader 夹爪的力反馈逻辑。"""
         pass
 
 
     @abstractmethod
     def gripper_feedback(self, leader_gripper_pos, leader_gripper_vel, gripper_feedback):
-        """
-        Processes feedback data from the follower gripper. This method is intended to compute 
-        force-feedback for the leader gripper. This method is called at every iteration of the 
-        control loop if self.enable_gripper_feedback is set to True.
-
-        Args:
-            leader_gripper_pos (float): Leader gripper position. Can be used to provide force-
-            feedback for the gripper.
-            leader_gripper_vel (float): Leader gripper velocity. Can be used to provide force-
-            feedback for the gripper.
-            gripper_feedback (Any): Feedback data from the gripper. The format can vary depending 
-            on the implementation, such as a NumPy array, scalar, or custom object.
-        
-        Returns:
-            float: The computed joint torque value to apply force-feedback to the leader gripper.
-
-        Raises:
-            NotImplementedError: If the method is not implemented in a subclass.
-        """
+        """在子类中实现：处理夹爪反馈并返回要施加在 leader 夹爪上的扭矩（力反馈计算）。"""
         pass
 
 
     @abstractmethod
     def update_communication(self, leader_arm_pos, leader_gripper_pos):
-        """
-        This method is intended to be called at every iteration of the control loop to transmit 
-        relevant data, such as joint position targets, from the leader to the follower arm.
+        """在控制循环的每次迭代中被调用：负责将 leader 的关节目标等通信给 follower。
 
-        Args:
-            leader_arm_pos (np.ndarray): A NumPy array containing the joint positions of the leader arm.
-            leader_gripper_pos (np.ndarray): A NumPy array containing the position of the leader gripper.
-
-        Raises:
-            NotImplementedError: If the method is not implemented in a subclass.
+        子类需实现具体的消息发送/发布逻辑。
         """
         pass

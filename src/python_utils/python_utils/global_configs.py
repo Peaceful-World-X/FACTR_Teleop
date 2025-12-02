@@ -24,8 +24,8 @@ franka_right_ip_address = "10.0.10.2"  # Franka 右侧机械臂的 IP 地址（�
 
 franka_right_real_zmq_addresses = {
     # 本地运行：桥接程序绑定到 127.0.0.1，所以这里也要连接到 127.0.0.1
-    "joint_state_sub":  "tcp://127.0.0.1:3099",
-    "joint_torque_sub": "tcp://127.0.0.1:3087",
+    "joint_state_sub":  f"tcp://{sim_desktop_ip_address}:3099", #如果是远程连接则为franka_right_ip_address
+    "joint_torque_sub": f"tcp://{sim_desktop_ip_address}:3087",
     "joint_pos_cmd_pub": f"tcp://{sim_desktop_ip_address}:2098",
 
 }

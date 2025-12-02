@@ -35,16 +35,12 @@ def create_array_msg(data):
 
 
 class FACTRTeleopFrankaZMQ(FACTRTeleop):
-    """
-    This class implements the required communication methods required by FACTRTeleopFranka using
-    ZMQ. Communication between the leader teleop arm and the follower Franka arm is established
-    using ZMQ subscribers and publishers. In addition, this class re-publishes all ZMQ communication
-    to ROS via ROS publishers, such as the current Franka joint states, the current Franka joint
-    position target commands, etc. 
+    """基于 ZMQ 的 FACTR ↔ Franka 通信实现（Franka 端适配器）。
 
-    This class also demonstrates an example implementation of force-feedback for the leader gripper.
-    The follower gripper publishes its torque information via ROS publisher. This class subscribes
-    to the torque and computes joint torque for the leader gripper to achieve force-feedback.
+    该类通过 ZMQ 的发布/订阅机制在 leader（FACTR）和 follower（Franka）之间建立通信，
+    并将收到的部分信息转发为 ROS 消息以便于记录与调试，例如 Franka 的关节状态与力矩。
+
+    同时提供一个夹爪力反馈的示例：从 follower 的夹爪或力矩来源订阅力信息，并将其用于 leader 侧的力反馈计算。
     """
 
     def __init__(self):
@@ -61,27 +57,28 @@ class FACTRTeleopFrankaZMQ(FACTRTeleop):
         else:
             raise ValueError(f"Invalid robot name '{self.name}'. Expected 'left' or 'right'.")
 
-        # ZMQ publisher used to send joint position commands to the Franka follower arm
+        # 用于向 Franka 跟随臂发送关节位置命令的 ZMQ 发布器
         self.franka_cmd_pub = ZMQPublisher(zmq_addresses["joint_pos_cmd_pub"])
-        # ZMQ subscriber used to get the current joint position and velocity of the Franka follower arm
+        # 用于获取 Franka 跟随臂当前关节位置与速度的 ZMQ 订阅器
         self.franka_joint_state_sub = ZMQSubscriber(zmq_addresses["joint_state_sub"])
-        # ROS publisher for re-publishing the current joint states of the Franka follower arm
+        # 将 Franka 当前关节状态转发到 ROS 的发布器
         self.obs_franka_state_pub = self.create_publisher(JointState, f'/franka/{self.name}/obs_franka_state', 10)
-        # ROS publisher for re-publishing Franka and gripper commands
+        # 将 Franka 与夹爪命令转发到 ROS 的发布器
         self.cmd_franka_pos_pub = self.create_publisher(JointState, f'/factr_teleop/{self.name}/cmd_franka_pos', 10)
         self.cmd_gripper_pos_pub = self.create_publisher(JointState, f'/factr_teleop/{self.name}/cmd_gripper_pos', 10)
 
         if self.enable_torque_feedback:
-            # ZMQ subscriber used to get the extenral joint torque from the Franka follower arm
+            # 用于获取 Franka 跟随臂外部关节力矩的 ZMQ 订阅器
             self.franka_torque_sub = ZMQSubscriber(zmq_addresses["joint_torque_sub"])
+            # 在首次收到力矩数据之前，循环等待（可视为初始化依赖）
             while self.franka_torque_sub.message is None:
                 self.get_logger().info(f"Has not received Franka {self.name}'s external joint torques")
                 time.sleep(0.1)
-            # ROS publisher for re-publishing Franka's external joint torque
+            # 将 Franka 的外部关节力矩转发到 ROS 的发布器
             self.obs_franka_torque_pub = self.create_publisher(JointState, f'/franka/{self.name}/obs_franka_torque', 10)
         
         if self.enable_gripper_feedback:
-            # ROS subscriber for getting the gripper's torque information
+            # 订阅夹爪力矩信息的 ROS 订阅器
             self.obs_gripper_torque_pub = self.create_subscription(
                 JointState, f'/gripper/{self.name}/obs_gripper_torque', 
                 self._gripper_external_torque_callback, 
@@ -102,21 +99,20 @@ class FACTRTeleopFrankaZMQ(FACTRTeleop):
     
     def get_leader_arm_external_joint_torque(self):
         external_torque = self.franka_torque_sub.message
-        # re-publishe Franka external joint torque to ROS
+        # 将 Franka 的外部关节力矩转发到 ROS
         self.obs_franka_torque_pub.publish(create_array_msg(external_torque))
         return external_torque
 
     def update_communication(self, leader_arm_pos, leader_gripper_pos):
-        # send leader arm position as joint position target to the follower Franka arm
+        # 将 leader 的关节位置发送为 follower 的位置目标（ZMQ 发布）
         self.franka_cmd_pub.send_message(leader_arm_pos)
-        # re-publish joint position target command to ROS via ROS publisher
+        # 将目标位置命令也转发为 ROS 消息以便记录/调试
         self.cmd_franka_pos_pub.publish(create_array_msg(leader_arm_pos))
 
-        # send gripper command to follower gripper
+        # 发送夹爪目标到 follower
         self.cmd_gripper_pos_pub.publish(create_array_msg([leader_gripper_pos]))
 
-        # publish the current Franka follower arm joint state to ROS for behavior cloning
-        # data collection purposes.
+        # 将当前 Franka 跟随臂的关节状态转为 ROS 消息（用于行为克隆与数据采集）
         franka_state = self.franka_joint_state_sub.message
         self.obs_franka_state_pub.publish(create_array_msg(franka_state))
         

@@ -65,12 +65,12 @@ class FrankaCommDiagnostic:
         try:
             pub = self.context.socket(zmq.PUB)
             pub.bind(address)
-            print("✓ Socket 创建成功")
+            print(" Socket 创建成功")
             
             time.sleep(1)  # 等待连接建立
             
             # 发送测试数据
-            test_positions = np.array([0.0, 0.0, 0.0, -1.57, 0.0, 1.57, 0.785])
+            test_positions = np.array([0.0, 0.0, 0.0, -1.57, 0.0, 1.57, 1.57])
             
             print(f"\n发送测试位置命令:")
             print(f"  {test_positions}")
@@ -80,7 +80,7 @@ class FrankaCommDiagnostic:
                 print(f"  第 {i+1} 次发送完成")
                 time.sleep(0.5)
             
-            print("\n✓ 命令发布测试完成")
+            print("\n 命令发布测试完成")
             print("  如果 Franka 控制端正在运行，它应该能收到这些命令")
             
             pub.close()

@@ -129,6 +129,7 @@ python3 scripts/test_franka_comm.py --side right
                                             │  Franka Robot       │
                                             └─────────────────────┘
 ```
+参考@gripper_technical_spec.md该技术文档，听取我的情况：目前通过@franka_factr_bridge_franky.py 该程序建立与/factr_teleop/right/cmd_franka_pos和/franka/right/obs_franka_state的联系，通过ZMQ实现接收franka状态以及发布期望关节位置等交互，实现了使用factr对franka的遥操；现在在节点/factr_teleop/right/cmd_gripper_pos中在ROS层面上发布了夹爪目标，但是实际上我需要重新写一个程序用于通过@gripper_technical_spec.md 的串口命令直接控制夹爪（底层），同时上层接收刚才提到的ROS发布的夹爪目标对夹进行控制；同时发布一个夹爪此时状态的话题。通过你的理解告诉我要实现的具体目标以保证我们能够对齐所需，同时请告诉我你的建议或意见，如果有什么需要更加细致的地方，你可以对我进行询问，等待以上完成后我进行确认我们再进行代码生成
 
 ## 🔍 故障排查速查表
 
