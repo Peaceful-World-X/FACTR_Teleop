@@ -1,0 +1,11 @@
+# Core dependencies for FACTR Teleop
+numpy>=1.24.0
+PyYAML>=6.0.0
+pinocchio>=0.4.0
+pyserial>=3.5
+pyzmq>=27.0.0
+
+# Note: dynamixel_sdk needs to be installed separately:
+# cd src/factr_teleop/factr_teleop/dynamixel/python && pip install -e .
+
+# Note: python_utils is automatically added to PYTHONPATH via .venv/bin/activate

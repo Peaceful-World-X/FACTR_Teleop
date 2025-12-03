@@ -6,9 +6,14 @@ log/
 # python
 __pycache__/
 *.egg-info
+.venv/
+venv/
 
 # data
 raw_data
 
 # misc
 .vscode/
+
+#test 
+scripts/

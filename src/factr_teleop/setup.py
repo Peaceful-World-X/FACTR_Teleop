@@ -1,4 +1,6 @@
 from setuptools import find_packages, setup
+import os
+from glob import glob
 
 package_name = 'factr_teleop'
 
@@ -10,6 +12,8 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
+        (os.path.join('share', package_name, 'config'), glob('factr_teleop/configs/*.yaml')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -23,6 +27,7 @@ setup(
             'factr_teleop_franka = factr_teleop.factr_teleop_franka_zmq:main',
             'factr_teleop_grav_comp_demo = factr_teleop.factr_teleop_grav_comp_demo:main',
             'gripper_bridge_node = factr_teleop.gripper_bridge_node:main',
+            'franka_bridge_node = factr_teleop.franka_bridge_node:main',
         ],
     },
 )
