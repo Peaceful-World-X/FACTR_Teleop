@@ -27,8 +27,15 @@ def generate_launch_description():
         output='screen',
         emulate_tty=True,
         parameters=[
-            # 如果有特定参数（如端口），可以在这里添加
-            # {"port": "/dev/ttyUSB0"} 
+            # 串口配置
+            # {"port": "/dev/ttyUSB2"},  # 默认: /dev/ttyUSB2
+            # {"baudrate": 115200},      # 默认: 115200
+            # {"slave_id": 9},           # 默认: 9
+            
+            # 控制模式配置
+            {"control_mode": "absolute"},  # "absolute" 或 "relative"，默认: "absolute"
+            {"leader_gripper_min_rad": 0.0},   # Leader 夹爪最小位置（弧度），默认: 0.0
+            {"leader_gripper_max_rad": 0.8},   # Leader 夹爪最大位置（弧度），默认: 0.8
         ]
     )
 

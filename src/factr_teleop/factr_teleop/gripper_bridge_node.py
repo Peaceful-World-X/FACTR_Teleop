@@ -41,6 +41,12 @@ WIDTH_MAX = 0.085
 FACTR_CMD_MIN_RAD = 0.0
 FACTR_CMD_MAX_RAD = 0.8
 
+# 控制模式
+# "relative": 相对控制（归一化到百分比后映射）
+# "absolute": 绝对控制（直接使用 Leader 位置值，单位：米）
+CONTROL_MODE_RELATIVE = "relative"
+CONTROL_MODE_ABSOLUTE = "absolute"
+
 # 寄存器限制（来自规格书第 8.3 和 10 节）
 # 规格: 0 (张开) ~ 255 (闭合)
 # 注意: 此映射相对于标准"位置"是反向的
@@ -157,38 +163,111 @@ class RobotiqGripperHardware:
         ratio = (reg_val - reg_closed) / (reg_open - reg_closed)
         return phy_min + ratio * (phy_max - phy_min)
 
+    def emergency_release(self) -> bool:
+        """执行紧急释放序列，清除可能的错误状态。
+        
+        步骤：
+        1. 发送 Act=0 命令（去激活）以清除错误状态
+        2. 等待一段时间让夹爪复位
+        3. 验证状态已清除
+        
+        Returns:
+            成功返回 True
+        """
+        self.logger.info("执行紧急释放序列...")
+        
+        with self.lock:
+            # 步骤 1: 发送去激活命令 (Act=0) 清除错误状态
+            self.logger.info("  发送去激活命令 (Act=0)...")
+            if not self._write_command(act=0, gto=0, r_pr=0, r_sp=0, r_fr=0):
+                self.logger.warning("紧急释放: 去激活命令发送失败")
+                return False
+            
+            # 步骤 2: 等待夹爪复位（至少 100ms，建议 200-500ms）
+            time.sleep(0.3)
+            
+            # 步骤 3: 验证状态已清除（可选，但有助于诊断）
+            status = self._read_status_raw()
+            if status:
+                g_act = status["gACT_byte"] & 0x01
+                g_sta = (status["gACT_byte"] >> 4) & 0x03
+                g_flt = status["gFLT"]
+                
+                self.logger.info(f"  紧急释放后状态: gACT={g_act}, gSTA={g_sta}, gFLT={g_flt}")
+                
+                # gFLT=0 表示无故障，gACT=0 表示未激活（符合预期）
+                if g_flt != 0:
+                    self.logger.warning(f"  警告: 检测到故障代码 gFLT={g_flt}，但继续激活流程")
+            
+            self.logger.info("紧急释放序列完成")
+            return True
+    
     def initialize(self) -> bool:
-        """运行最小化的夹爪激活序列。
-
-        此实现匹配已知可用的用户命令:
-
-        - 09 10 03 E8 00 03 06 01 00 00 00 FF 96 B3 7F
-
-        对应参数:
-        - Act = 1, GTO = 0, Pos = 0, Speed = 255, Force = 150
+        """运行完整的夹爪激活序列。
+        
+        完整流程：
+        1. 执行紧急释放序列（清除可能的错误状态）
+        2. 发送激活命令 (Act=1)
+        3. 等待状态变为 gSTA=3, gACT=1
+        
+        Returns:
+            成功返回 True
         """
         with self.lock:
-            # 单一激活命令，不进行前置复位。这反映了用户通过串口终端验证的行为。
-            self.logger.info("激活夹爪（单一激活命令）...")
+            # 步骤 1: 紧急释放（清除错误状态）
+            if not self.emergency_release():
+                self.logger.warning("紧急释放失败，但继续尝试激活...")
+            
+            # 步骤 2: 发送激活命令
+            self.logger.info("发送激活命令 (Act=1)...")
             if not self._write_command(act=1, gto=0, r_pr=0, r_sp=255, r_fr=150):
                 self.logger.error("夹爪激活 Modbus 命令失败。")
                 return False
-
-            # 可选: 尝试通过状态寄存器确认激活，但如果命令本身已成功发送，
-            # 不将缺少响应视为致命错误。
-            timeout = 2.0
+            
+            # 步骤 3: 等待状态变为 gSTA=3, gACT=1
+            timeout = 3.0  # 增加超时时间以确保激活完成
             start_time = time.time()
+            check_interval = 0.1
+            
+            self.logger.info("等待夹爪激活 (gSTA=3, gACT=1)...")
+            
             while time.time() - start_time < timeout:
                 status = self._read_status_raw()
                 if status:
+                    g_act = status["gACT_byte"] & 0x01
                     g_sta = (status["gACT_byte"] >> 4) & 0x03
-                    if g_sta == 3:
-                        self.logger.info("夹爪激活完成（gSTA=3）。")
+                    g_flt = status["gFLT"]
+                    
+                    # 检查是否达到目标状态
+                    if g_sta == 3 and g_act == 1:
+                        self.logger.info(f"夹爪激活成功！状态: gSTA={g_sta}, gACT={g_act}, gFLT={g_flt}")
                         return True
-                time.sleep(0.1)
-
-            self.logger.info("夹爪激活命令已发送（无明确的 gSTA 确认）。")
-            return True
+                    
+                    # 如果检测到故障，记录但继续等待
+                    if g_flt != 0:
+                        self.logger.warning(f"激活过程中检测到故障: gFLT={g_flt}, gSTA={g_sta}, gACT={g_act}")
+                    
+                    # 记录中间状态（每 0.5 秒一次，避免日志过多）
+                    elapsed = time.time() - start_time
+                    if int(elapsed * 2) != int((elapsed - check_interval) * 2):
+                        self.logger.info(f"  等待激活中... gSTA={g_sta}, gACT={g_act} (已等待 {elapsed:.1f}s)")
+                
+                time.sleep(check_interval)
+            
+            # 超时后检查最终状态
+            status = self._read_status_raw()
+            if status:
+                g_act = status["gACT_byte"] & 0x01
+                g_sta = (status["gACT_byte"] >> 4) & 0x03
+                g_flt = status["gFLT"]
+                self.logger.error(
+                    f"夹爪激活超时！最终状态: gSTA={g_sta}, gACT={g_act}, gFLT={g_flt} "
+                    f"(期望: gSTA=3, gACT=1)"
+                )
+            else:
+                self.logger.error("夹爪激活超时：无法读取状态")
+            
+            return False
 
     def _write_command(self, act: int, gto: int, r_pr: int, r_sp: int, r_fr: int) -> bool:
         """将 6 字节命令写入夹爪寄存器。
@@ -376,6 +455,34 @@ class RobotiqGripperHardware:
             is_moving = (g_obj == 0)
 
             return pos_m, current_a, is_moving
+    
+    def get_status_detailed(self) -> Optional[dict]:
+        """读取详细的夹爪状态信息。
+        
+        Returns:
+            包含详细状态信息的字典，如果读取失败返回 None
+        """
+        with self.lock:
+            raw = self._read_status_raw()
+            if not raw:
+                return None
+            
+            g_act_byte = raw['gACT_byte']
+            g_act = g_act_byte & 0x01  # 位 0: 激活状态
+            g_gto = (g_act_byte >> 3) & 0x01  # 位 3: 执行移动
+            g_sta = (g_act_byte >> 4) & 0x03  # 位 4-5: 夹爪状态
+            g_obj = (g_act_byte >> 6) & 0x03  # 位 6-7: 对象检测
+            
+            return {
+                'gACT': g_act,  # 0=未激活, 1=激活
+                'gGTO': g_gto,  # 0=停止, 1=执行移动
+                'gSTA': g_sta,  # 0=复位中, 1=配置中, 2=未激活, 3=激活
+                'gOBJ': g_obj,  # 0=运动中, 1=已停止(无对象), 2=已停止(有对象), 3=未知
+                'gFLT': raw['gFLT'],  # 故障代码 (0=无故障)
+                'gPR': raw['gPR'],  # 位置请求
+                'gPO': raw['gPO'],  # 当前位置
+                'gCU': raw['gCU'],  # 电流
+            }
 
     def set_target(self, width_m: float, force_percent: float = 50.0, speed_percent: float = 100.0):
         """向夹爪发送移动命令。
@@ -420,13 +527,23 @@ class GripperBridgeNode(Node):
         self.declare_parameter('baudrate', DEFAULT_BAUDRATE)
         self.declare_parameter('slave_id', DEFAULT_SLAVE_ID)
         self.declare_parameter('poll_rate', 50.0)  # 赫兹
+        self.declare_parameter('control_mode', CONTROL_MODE_ABSOLUTE)  # 控制模式: "relative" 或 "absolute"
+        self.declare_parameter('leader_gripper_min_rad', 0.0)  # Leader 夹爪最小位置（弧度）
+        self.declare_parameter('leader_gripper_max_rad', 0.8)  # Leader 夹爪最大位置（弧度）
 
         port = self.get_parameter('port').value
         baudrate = self.get_parameter('baudrate').value
         slave_id = self.get_parameter('slave_id').value
         self.poll_rate = self.get_parameter('poll_rate').value
+        self.control_mode = self.get_parameter('control_mode').value
+        self.leader_gripper_min_rad = self.get_parameter('leader_gripper_min_rad').value
+        self.leader_gripper_max_rad = self.get_parameter('leader_gripper_max_rad').value
 
         self.get_logger().info(f"初始化夹爪桥接节点，端口: {port} (ID: {slave_id}, 波特率: {baudrate})...")
+        self.get_logger().info(f"控制模式: {self.control_mode}")
+        if self.control_mode == CONTROL_MODE_ABSOLUTE:
+            self.get_logger().info(f"  Leader 夹爪范围: [{self.leader_gripper_min_rad:.3f}, {self.leader_gripper_max_rad:.3f}] 弧度")
+            self.get_logger().info(f"  Follower 夹爪范围: [{WIDTH_MIN:.3f}, {WIDTH_MAX:.3f}] 米")
 
         # 初始化硬件
         self.hw = RobotiqGripperHardware(port, slave_id, baudrate)
@@ -439,8 +556,10 @@ class GripperBridgeNode(Node):
             self.get_logger().info("串口已连接。初始化夹爪...")
             if self.hw.initialize():
                 self.get_logger().info("夹爪初始化成功。")
+                self.is_activated = True
             else:
                 self.get_logger().error("夹爪初始化失败。")
+                self.is_activated = False
 
         # ROS 订阅者
         self.sub_cmd = self.create_subscription(
@@ -464,45 +583,132 @@ class GripperBridgeNode(Node):
         # 内部状态
         self.last_target_pos = None
         self.lock = threading.Lock()
+        self.last_error_check_time = 0.0
+        self.error_check_interval = 1.0  # 每秒检查一次错误状态
+        self.is_activated = False  # 跟踪激活状态
 
     def cmd_callback(self, msg: JointState):
         """夹爪命令回调函数。
         
-        期望 msg.position[0] 为 FACTR 侧夹爪角度（弧度），其中:
-
-        - 0.0 弧度 => 完全闭合
-        - FACTR_CMD_MAX_RAD（默认 0.8） => 完全张开
-
-        角度首先映射到 0.0–1.0 百分比，然后映射到
-        物理 Robotiq 开口宽度（0.0–0.085 米）。
+        根据控制模式处理命令：
+        
+        - "relative" 模式（相对控制）:
+          期望 msg.position[0] 为 FACTR 侧夹爪角度（弧度），其中:
+          - leader_gripper_min_rad => 完全闭合 (0.0 米)
+          - leader_gripper_max_rad => 完全张开 (0.085 米)
+          角度归一化到 0.0–1.0 百分比，然后映射到物理宽度。
+        
+        - "absolute" 模式（绝对控制）:
+          期望 msg.position[0] 为 Leader 夹爪位置（弧度），直接映射到 Follower 夹爪位置（米）。
+          使用线性映射：Leader [min_rad, max_rad] -> Follower [WIDTH_MIN, WIDTH_MAX]
+          实现一一对应的绝对位置控制。
         """
         if not msg.position:
             return
 
         try:
-            cmd_angle = float(msg.position[0])
-
-            # 限制到配置的 FACTR 命令范围。
-            cmd_angle = max(FACTR_CMD_MIN_RAD, min(FACTR_CMD_MAX_RAD, cmd_angle))
-
-            # 归一化到 0.0–1.0 百分比。
-            if FACTR_CMD_MAX_RAD > FACTR_CMD_MIN_RAD:
-                ratio = (cmd_angle - FACTR_CMD_MIN_RAD) / (
-                    FACTR_CMD_MAX_RAD - FACTR_CMD_MIN_RAD
-                )
+            cmd_value = float(msg.position[0])
+            
+            if self.control_mode == CONTROL_MODE_ABSOLUTE:
+                # 绝对控制模式：Leader 位置直接映射到 Follower 位置
+                # 限制到 Leader 夹爪范围
+                cmd_value = max(self.leader_gripper_min_rad, min(self.leader_gripper_max_rad, cmd_value))
+                
+                # 线性映射：Leader [min_rad, max_rad] -> Follower [WIDTH_MIN, WIDTH_MAX]
+                if self.leader_gripper_max_rad > self.leader_gripper_min_rad:
+                    # 归一化到 [0, 1]
+                    ratio = (cmd_value - self.leader_gripper_min_rad) / (
+                        self.leader_gripper_max_rad - self.leader_gripper_min_rad
+                    )
+                    # 映射到 Follower 物理宽度范围
+                    target_m = WIDTH_MIN + ratio * (WIDTH_MAX - WIDTH_MIN)
+                else:
+                    target_m = WIDTH_MIN
+                
+                # 限制到 Follower 物理范围
+                target_m = max(WIDTH_MIN, min(WIDTH_MAX, target_m))
+                
             else:
-                ratio = 0.0
-
-            # 将百分比映射到 Robotiq 物理开口宽度。
-            target_m = WIDTH_MIN + ratio * (WIDTH_MAX - WIDTH_MIN)
+                # 相对控制模式（保持原有逻辑）
+                cmd_angle = cmd_value
+                cmd_angle = max(FACTR_CMD_MIN_RAD, min(FACTR_CMD_MAX_RAD, cmd_angle))
+                
+                if FACTR_CMD_MAX_RAD > FACTR_CMD_MIN_RAD:
+                    ratio = (cmd_angle - FACTR_CMD_MIN_RAD) / (
+                        FACTR_CMD_MAX_RAD - FACTR_CMD_MIN_RAD
+                    )
+                else:
+                    ratio = 0.0
+                
+                target_m = WIDTH_MIN + ratio * (WIDTH_MAX - WIDTH_MIN)
             
             with self.lock:
                 self.last_target_pos = target_m
+                
         except Exception as e:
             self.get_logger().warning(f"收到无效命令: {e}")
 
+    def _check_and_recover_from_error(self) -> bool:
+        """检查夹爪错误状态，如果检测到错误则执行恢复。
+        
+        Returns:
+            如果夹爪处于正常状态返回 True，如果检测到错误并尝试恢复返回 False
+        """
+        current_time = time.time()
+        if current_time - self.last_error_check_time < self.error_check_interval:
+            return True  # 未到检查时间
+        
+        self.last_error_check_time = current_time
+        
+        # 读取详细状态
+        status = self.hw.get_status_detailed()
+        if not status:
+            # 无法读取状态，可能是通信问题
+            return True  # 不视为致命错误，继续运行
+        
+        g_act = status['gACT']
+        g_sta = status['gSTA']
+        g_flt = status['gFLT']
+        
+        # 检查是否处于激活状态
+        is_activated = (g_sta == 3 and g_act == 1)
+        
+        # 如果之前是激活的，但现在不是，或者检测到故障
+        if self.is_activated and not is_activated:
+            self.get_logger().warning(
+                f"检测到夹爪失活！状态: gSTA={g_sta}, gACT={g_act}, gFLT={g_flt}"
+            )
+            self.is_activated = False
+            
+            # 如果检测到故障，执行恢复
+            if g_flt != 0:
+                self.get_logger().error(f"检测到夹爪故障 (gFLT={g_flt})，执行紧急恢复...")
+                if self.hw.initialize():
+                    self.get_logger().info("夹爪恢复成功")
+                    self.is_activated = True
+                    return True
+                else:
+                    self.get_logger().error("夹爪恢复失败")
+                    return False
+        
+        # 如果之前未激活，但现在激活了
+        if not self.is_activated and is_activated:
+            self.get_logger().info("夹爪已激活")
+            self.is_activated = True
+        
+        # 如果检测到故障但仍在激活状态，记录警告
+        if g_flt != 0 and is_activated:
+            self.get_logger().warning(f"夹爪处于激活状态但检测到故障代码: gFLT={g_flt}")
+        
+        return True
+    
     def control_loop(self):
-        """主循环: 读取状态 -> 发布 -> 写入最新命令。"""
+        """主循环: 检查错误 -> 读取状态 -> 发布 -> 写入最新命令。"""
+        # 0. 定期检查错误状态并恢复
+        if not self._check_and_recover_from_error():
+            # 如果恢复失败，跳过本次循环
+            return
+        
         # 1. 读取并发布状态
         try:
             pos, current, is_moving = self.hw.get_state()
@@ -519,11 +725,11 @@ class GripperBridgeNode(Node):
         except Exception as e:
             self.get_logger().warning(f"读取/发布状态时出错: {e}")
 
-        # 2. 写入命令（如果已更新）
+        # 2. 写入命令（如果已更新且夹爪已激活）
         with self.lock:
             target = self.last_target_pos
         
-        if target is not None:
+        if target is not None and self.is_activated:
             # 优化: 在实际系统中，我们可能只在目标显著改变时
             # 或以低于读取的频率写入。
             # 但是，Modbus RTU 是请求-响应模式。
@@ -536,6 +742,9 @@ class GripperBridgeNode(Node):
                 self.hw.set_target(target, force_percent=50.0, speed_percent=100.0)
             except Exception as e:
                 self.get_logger().warning(f"写入命令时出错: {e}")
+        elif target is not None and not self.is_activated:
+            # 有命令但夹爪未激活，记录但不发送命令
+            self.get_logger().debug("有命令但夹爪未激活，跳过命令发送")
 
 
 def main(args=None):

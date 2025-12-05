@@ -32,6 +32,11 @@ chmod +x run.sh
 ./run.sh
 ```
 
+## 程序关闭
+对两个程序进行启动后需要关闭遥操程序，最好先ctrl+C掉franka_factr_bridge_franky.py程序再ctrl+C掉factr_teleop teleop_system.launch.py程序，避免出现可能的错误
+
+若factr leader arm出现剧烈不规则运动，即使拔除电源即可
+
 ## 编译和构建
 对节点进行更改后可能需要对该包进行重新编译
 ```bash
@@ -40,16 +45,21 @@ colcon build --packages-select factr_teleop
 
 ## 相关节点和程序
 ### 主要程序
-**基于franky库的franka FCI和主机ZMQ的桥接程序** [franka_factr_bridge_franky.py](franka_factr_bridge_franky.py)
-**夹爪的主动控制程序，接收factr端的控制信息与对franka发送夹爪控制（串口通信**[gripper_bridge_node.py](src/factr_teleop/factr_teleop/gripper_bridge_node.py)
-**factr端的ZMQ服务，用于与桥接程序通信**[factr_teleop_franka_zmq.py ](src/factr_teleop/factr_teleop/factr_teleop_franka_zmq.py)
-**同时启用夹爪和factr的launch**[teleop_system.launch.py](src/factr_teleop/launch/teleop_system.launch.py)
+- **基于franky库的franka FCI和主机ZMQ的桥接程序** [franka_factr_bridge_franky.py](franka_factr_bridge_franky.py)
+
+- **夹爪的主动控制程序，接收factr端的控制信息与对franka发送夹爪控制（串口通信）**[gripper_bridge_node.py](src/factr_teleop/factr_teleop/gripper_bridge_node.py)
+
+- **factr端的ZMQ服务，用于与桥接程序通信**[factr_teleop_franka_zmq.py ](src/factr_teleop/factr_teleop/factr_teleop_franka_zmq.py)
+
+- **ros2同时启用夹爪和factr的launch**[teleop_system.launch.py](src/factr_teleop/launch/teleop_system.launch.py)
 
 
 ### 相关配置
-**遥操程序IP地址配置**[global_configs.py ](src/python_utils/python_utils/global_configs.py)
-**遥操程序factr补偿参数等配置**[franka_example.yaml](src/factr_teleop/factr_teleop/configs/franka_example.yaml)
-**示例程序factr补偿参数等配置**[grav_comp_demo.yaml](src/factr_teleop/factr_teleop/configs/grav_comp_demo.yaml)
+- **遥操程序IP地址配置**[global_configs.py ](src/python_utils/python_utils/global_configs.py)
+
+- **遥操程序factr补偿参数等配置**[franka_example.yaml](src/factr_teleop/factr_teleop/configs/franka_example.yaml)
+
+- **示例程序factr补偿参数等配置**[grav_comp_demo.yaml](src/factr_teleop/factr_teleop/configs/grav_comp_demo.yaml)
 
 
 
