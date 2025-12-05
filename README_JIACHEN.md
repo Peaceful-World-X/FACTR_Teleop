@@ -1,6 +1,13 @@
 # 个人搭建框架部署与实验
 
-## 环境配置
+## 相关配置
+### 网络配置
+连接网线后以太网连接IPv4的地址需要设置为
+```bash
+10.0.10.1
+```
+连接https://10.0.10.2/desk/的图形化界面后对界面进行 *activate FCI*的操作
+### 环境配置
 **factr相关ros节点**,用于factr端的相关ros节点的启动
 ```bash
 cd /home/cytoderm/projects/FACTR_Teleop
@@ -32,10 +39,13 @@ chmod +x run.sh
 ./run.sh
 ```
 
-## 程序关闭
-对两个程序进行启动后需要关闭遥操程序，最好先ctrl+C掉franka_factr_bridge_franky.py程序再ctrl+C掉factr_teleop teleop_system.launch.py程序，避免出现可能的错误
+### 程序启动
+- 程序启动前保持factr夹爪关闭
 
-若factr leader arm出现剧烈不规则运动，即使拔除电源即可
+### 程序关闭
+- 对两个程序进行启动后需要关闭遥操程序，最好先ctrl+C掉factr_teleop teleop_system.launch.py程序，再ctrl+C掉franka_factr_bridge_franky.py程序，避免出现可能的错误
+
+- 若factr leader arm出现剧烈不规则运动，即使拔除电源即可
 
 ## 编译和构建
 对节点进行更改后可能需要对该包进行重新编译
@@ -69,3 +79,12 @@ ROS2 中提供了一个示例的部署脚本，用于将已有的策略部署到
 ```bash
 ros2 launch factr_teleop/launch/rollout.py
 ```
+
+
+## TODO
+- **摄像头开发**
+- **数采流程**
+- 关节5关节飘的问题
+- 一键启动的稳定性，有时候退出后会存在factr乱动的情况
+- 程序关闭后主动关闭终端（或改成后台运行），结束后kill
+- 夹爪速度过慢 无力反馈

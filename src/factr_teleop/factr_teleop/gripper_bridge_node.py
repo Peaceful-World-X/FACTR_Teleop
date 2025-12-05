@@ -202,25 +202,104 @@ class RobotiqGripperHardware:
             self.logger.info("紧急释放序列完成")
             return True
     
+    def reset_gripper(self) -> bool:
+        """完全复位夹爪，清除激活位。
+
+        发送复位命令：09 10 03 E8 00 03 06 00 00 00 00 00 00 [CRC]
+        将所有寄存器设置为0，相当于：
+        - ACT = 0 (去激活)
+        - GTO = 0 (不执行移动)
+        - ATR = 0 (不自动释放)
+        - rPR = 0 (位置请求)
+        - rSP = 0 (速度)
+        - rFR = 0 (力度)
+
+        Returns:
+            成功返回 True
+        """
+        if self.serial is None or not self.serial.is_open:
+            self.logger.error("串口未打开；无法复位夹爪。")
+            return False
+
+        with self.lock:
+            self.logger.info("发送夹爪完全复位命令 (rACT=0)...")
+
+            # 构建复位命令帧：将所有6个字节设置为0
+            # [id][func=0x10][addr_hi][addr_lo][qty_hi][qty_lo][byte_count][data...][crc_lo][crc_hi]
+            pdu = bytearray()
+            pdu.append(self.slave_id & 0xFF)
+            pdu.append(0x10)  # 写多个寄存器
+            pdu.extend(struct.pack(">H", REG_CMD_START))
+            pdu.extend(struct.pack(">H", 3))  # 3 个寄存器
+            pdu.append(6)  # 6 个数据字节
+            pdu.extend([0, 0, 0, 0, 0, 0])  # 所有数据字节为0
+
+            crc = self._compute_crc(bytes(pdu))
+            frame = bytes(pdu) + struct.pack("<H", crc)
+
+            try:
+                # 发送复位命令
+                self.serial.reset_input_buffer()
+                self.serial.write(frame)
+                self.serial.flush()
+
+                # 读取响应
+                resp = self.serial.read(8)
+                if len(resp) != 8:
+                    self.logger.warning(
+                        f"复位命令: 期望 8 字节响应，收到 {len(resp)} 字节。"
+                    )
+                    return False
+
+                # 验证响应
+                data_no_crc = resp[:-2]
+                crc_bytes = resp[-2:]
+                expected_crc = self._compute_crc(data_no_crc)
+                recv_crc = int.from_bytes(crc_bytes, byteorder="little")
+
+                if expected_crc != recv_crc:
+                    self.logger.warning("复位命令: 响应中 CRC 不匹配。")
+                    return False
+
+                if data_no_crc[0] != (self.slave_id & 0xFF) or data_no_crc[1] != 0x10:
+                    self.logger.warning("复位命令: 意外的单元 ID 或功能码。")
+                    return False
+
+                self.logger.info("夹爪完全复位成功")
+                return True
+
+            except serial.SerialException as exc:
+                self.logger.warning(f"复位时异常: {exc}")
+                return False
+
     def initialize(self) -> bool:
         """运行完整的夹爪激活序列。
-        
+
         完整流程：
-        1. 执行紧急释放序列（清除可能的错误状态）
-        2. 发送激活命令 (Act=1)
-        3. 等待状态变为 gSTA=3, gACT=1
-        
+        1. 完全复位夹爪（清除激活位）
+        2. 执行紧急释放序列（清除可能的错误状态）
+        3. 发送激活命令 (Act=1)
+        4. 等待状态变为 gSTA=3, gACT=1
+
         Returns:
             成功返回 True
         """
         with self.lock:
-            # 步骤 1: 紧急释放（清除错误状态）
+            # 步骤 1: 完全复位夹爪
+            self.logger.info("开始夹爪初始化流程...")
+            if not self.reset_gripper():
+                self.logger.warning("夹爪复位失败，但继续尝试激活...")
+
+            # 步骤 2: 紧急释放（清除错误状态）
             if not self.emergency_release():
                 self.logger.warning("紧急释放失败，但继续尝试激活...")
-            
-            # 步骤 2: 发送激活命令
-            self.logger.info("发送激活命令 (Act=1)...")
-            if not self._write_command(act=1, gto=0, r_pr=0, r_sp=255, r_fr=150):
+
+            # 步骤 3: 发送激活命令（不发送位置命令，保持当前状态）
+            # 注意：r_pr=0 在某些情况下可能被解释为闭合，所以使用中间位置（张开）
+            # 或者使用 GTO=0 来确保不执行移动，只激活
+            self.logger.info("发送激活命令 (Act=1, GTO=0, 不移动)...")
+            # 使用张开位置（REG_POS_OPEN=3）作为初始位置，避免意外闭合
+            if not self._write_command(act=1, gto=0, r_pr=REG_POS_OPEN, r_sp=255, r_fr=150):
                 self.logger.error("夹爪激活 Modbus 命令失败。")
                 return False
             
@@ -586,6 +665,7 @@ class GripperBridgeNode(Node):
         self.last_error_check_time = 0.0
         self.error_check_interval = 1.0  # 每秒检查一次错误状态
         self.is_activated = False  # 跟踪激活状态
+        self.has_received_command = False  # 是否已收到第一个命令
 
     def cmd_callback(self, msg: JointState):
         """夹爪命令回调函数。
@@ -644,6 +724,7 @@ class GripperBridgeNode(Node):
             
             with self.lock:
                 self.last_target_pos = target_m
+                self.has_received_command = True  # 标记已收到命令
                 
         except Exception as e:
             self.get_logger().warning(f"收到无效命令: {e}")
@@ -728,8 +809,10 @@ class GripperBridgeNode(Node):
         # 2. 写入命令（如果已更新且夹爪已激活）
         with self.lock:
             target = self.last_target_pos
+            has_received = self.has_received_command
         
-        if target is not None and self.is_activated:
+        # 只有在收到第一个命令后才发送位置命令，避免初始化时意外移动
+        if target is not None and self.is_activated and has_received:
             # 优化: 在实际系统中，我们可能只在目标显著改变时
             # 或以低于读取的频率写入。
             # 但是，Modbus RTU 是请求-响应模式。
@@ -745,6 +828,9 @@ class GripperBridgeNode(Node):
         elif target is not None and not self.is_activated:
             # 有命令但夹爪未激活，记录但不发送命令
             self.get_logger().debug("有命令但夹爪未激活，跳过命令发送")
+        elif target is not None and not has_received:
+            # 有目标但还未收到第一个命令，等待 Leader 发送命令
+            self.get_logger().debug("等待 Leader 夹爪命令...")
 
 
 def main(args=None):

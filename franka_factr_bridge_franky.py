@@ -10,6 +10,7 @@ import signal
 import sys
 import threading
 import time
+import atexit
 from typing import Optional
 
 import numpy as np
@@ -54,6 +55,10 @@ class FrankaFactrBridge:
         self.cmd_subscriber = None
         self.state_publisher = None
         self.torque_publisher = None
+        self.is_shutting_down = False  # 标记是否正在关闭
+
+        # 注册退出时的清理函数
+        atexit.register(self._cleanup_on_exit)
 
     def setup_zmq(self):
         """初始化 ZMQ 通信套接字。"""
@@ -144,7 +149,7 @@ class FrankaFactrBridge:
             pass
 
         # Main control loop
-        while self.running:
+        while self.running and not self.is_shutting_down:
             try:
                 try:
                     message = self.cmd_subscriber.recv(zmq.NOBLOCK)
@@ -157,6 +162,11 @@ class FrankaFactrBridge:
                 except zmq.Again:
                     # 没有新命令时保持当前运动
                     pass
+
+                # 检查是否需要退出
+                if self.is_shutting_down:
+                    break
+
             except Exception as e:
                 logger.error(f"Motion error: {e}")
                 # Attempt error recovery
@@ -200,40 +210,111 @@ class FrankaFactrBridge:
         try:
             self.control_loop()
         except KeyboardInterrupt:
-            logger.info("Interrupted by user")
+            logger.info("用户中断")
         except Exception as e:
-            logger.error(f"Unexpected error: {e}")
+            logger.error(f"意外错误: {e}")
         finally:
+            # 正常退出时也执行关闭序列
             self.stop()
+
+    def _cleanup_on_exit(self):
+        """程序退出时的清理函数。"""
+        if self.is_shutting_down:
+            return  # 避免重复清理
+
+        logger.info("检测到程序退出，开始清理...")
+        self._shutdown_sequence()
+        logger.info("清理完成")
+
+    def _shutdown_sequence(self):
+        """执行完整的关闭序列。"""
+        self.is_shutting_down = True
+
+        try:
+            logger.info("开始执行关闭序列...")
+
+            # 1. 停止主循环
+            self.running = False
+            logger.info("已停止主循环")
+
+            # 2. 等待当前运动完成
+            if self.robot:
+                logger.info("等待当前运动完成...")
+                try:
+                    self.robot.join_motion(timeout=5.0)  # 等待最多 5 秒
+                    logger.info("当前运动已完成")
+                except Exception as e:
+                    logger.warning(f"等待运动完成时出错: {e}")
+
+            # 3. 移动到初始位置（复位）
+            if self.robot:
+                logger.info("将 Franka 移动到初始位置...")
+                try:
+                    init_motion = JointMotion(INITIAL_POSITION.tolist())
+                    self.robot.move(init_motion)
+                    logger.info("✅ 成功复位到初始位置")
+                except Exception as e:
+                    logger.error(f"❌ 复位到初始位置失败: {e}")
+
+            # 4. 停止机器人
+            if self.robot:
+                try:
+                    self.robot.stop()
+                    logger.info("✅ 机器人已停止")
+                except Exception as e:
+                    logger.warning(f"停止机器人时出错: {e}")
+
+            # 5. 关闭 ZMQ 连接
+            if self.zmq_context:
+                try:
+                    self.zmq_context.term()
+                    logger.info("✅ ZMQ 连接已关闭")
+                except Exception as e:
+                    logger.warning(f"关闭 ZMQ 时出错: {e}")
+
+            logger.info("✅ 关闭序列执行完成")
+
+        except Exception as e:
+            logger.error(f"❌ 关闭序列执行出错: {e}")
 
     def stop(self):
         """停止桥接并清理资源。"""
-        logger.info("Stopping bridge")
-        self.running = False
-
-        if self.zmq_context:
-            self.zmq_context.term()
-
-        if self.robot:
-            try:
-                try:
-                    self.robot.join_motion()
-                except Exception:
-                    pass
-                self.robot.stop()
-            except Exception as e:
-                logger.warning(f"Error stopping robot: {e}")
-
-        logger.info("Bridge stopped")
+        logger.info("正常停止桥接")
+        self._shutdown_sequence()
+        logger.info("桥接已停止")
 
 
 def signal_handler(sig, frame):
     """SIGINT 信号处理器（Ctrl-C）。"""
-    logger.info("收到 SIGINT，正在退出")
-    sys.exit(0)
+    logger.info("收到 SIGINT，正在退出...")
+    # 设置全局退出标志，让主循环停止
+    if 'bridge' in globals():
+        bridge.running = False
+        bridge.is_shutting_down = True
+    # 不要强制退出，让程序正常结束以执行 atexit 清理
 
 
 if __name__ == "__main__":
-    signal.signal(signal.SIGINT, signal_handler)
-    bridge = FrankaFactrBridge()
-    bridge.start()
+    # 创建全局 bridge 实例，用于信号处理器访问
+    bridge = None
+
+    def create_and_setup_bridge():
+        global bridge
+        bridge = FrankaFactrBridge()
+        # 设置信号处理器
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)  # 也处理 SIGTERM
+        return bridge
+
+    try:
+        bridge = create_and_setup_bridge()
+        bridge.start()
+    except KeyboardInterrupt:
+        logger.info("Keyboard interrupt received")
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+    finally:
+        logger.info("Program exiting...")
+        # 确保清理被执行
+        if bridge and hasattr(bridge, '_cleanup_on_exit'):
+            bridge._cleanup_on_exit()

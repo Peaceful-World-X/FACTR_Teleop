@@ -11,13 +11,12 @@ dynamixel:  # Dynamixel 舵机配置部分
 arm_teleop:  # 机械臂遥操作配置部分
   leader_urdf: "factr_teleop_franka.urdf"  # Leader arm 的 URDF 文件，用于创建动力学模型计算重力补偿
   num_arm_joints: 7  # 机械臂关节数量
-  arm_joint_limits_max: [2.8973, 1.7628, 2.8973, -0.8698, 2.8973, 3.7525, 2.8973]  # 各关节的最大角度限制（弧度）
-  arm_joint_limits_min: [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973]  # 各关节的最小角度限制（弧度）
+  arm_joint_limits_max: [2.8973, 1.7628, 2.8973, -0.8698, 2.8973, 3.7525, 3.0718]  # 各关节的最大角度限制（弧度）
+  arm_joint_limits_min: [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -1.48]  # 各关节的最小角度限制（弧度）
   arm_joint_limits_safety_margin: 0.1  # 关节限位安全边距（弧度），用于避免达到硬限位
   # Leader 到 Follower 的关节偏移量配置（可选）
-  joint_offset: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.57]  # 每个关节的偏移量（弧度），默认全为 0.0
+  joint_offset: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.57]  # 关节6偏移90度
   # 映射公式：follower_joint_pos = leader_joint_pos + joint_offset[i]
-  # 示例：如果设置为 [0.0, 0.0, 0.0, -1.57, 0.0, 0.0, 0.0]，则 Leader 的关节 3 的 90 度会映射到 Follower 的 0 度
   initialization:  # 初始化配置子部分
     # The expected leader arm joint position before launching the script
     calibration_joint_pos: [0, 0, 0, -1.57, 0, 1.57, 1.57]  # 校准位置：启动前 leader arm 应该放置的关节位置（弧度），用于校准舵机偏移
@@ -31,7 +30,7 @@ controller:  # 控制器配置部分
   frequency: 500  # 控制循环频率（Hz），500Hz 表示每秒执行 500 次控制循环
   torque_feedback:  # 力矩反馈配置子部分
     enable: True  # 是否启用力矩反馈（True=启用，False=禁用）
-    gain: 3.0  # 力矩反馈增益系数
+    gain: 2.0  # 力矩反馈增益系数
     damping: 0.0  # 力矩反馈阻尼系数
     motor_scalar: 94.5652173913  # 电机标量，用于力矩单位转换
   gravity_comp:  # 重力补偿配置子部分
