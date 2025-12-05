@@ -1,115 +1,113 @@
 
-<h1> FACTR Teleop: Low-Cost Force-Feedback Teleoperation</h1>
+<h1> FACTR Teleop: 低成本力反馈遥操作系统</h1>
 
 
 
 #### [Jason Jingzhou Liu](https://jasonjzliu.com)<sup>\*</sup>, [Yulong Li](https://yulongli42.github.io)<sup>\*</sup>, [Kenneth Shaw](https://kennyshaw.net), [Tony Tao](https://tony-tao.com), [Ruslan Salakhutdinov](https://www.cs.cmu.edu/~rsalakhu/), [Deepak Pathak](https://www.cs.cmu.edu/~dpathak/)
-_Carnegie Mellon University_
+_卡内基梅隆大学_
 
-[Project Page](https://jasonjzliu.com/factr/) | [arXiV](https://arxiv.org/abs/2502.17432) | [FACTR](https://github.com/RaindragonD/factr/) | [FACTR Hardware](https://github.com/JasonJZLiu/FACTR_Hardware)
+[项目主页](https://jasonjzliu.com/factr/) | [arXiV](https://arxiv.org/abs/2502.17432) | [FACTR](https://github.com/RaindragonD/factr/) | [FACTR 硬件](https://github.com/JasonJZLiu/FACTR_Hardware)
 
-<h1> </h1>
-<img src="assets/main_teaser.jpg" alt="teaser" width="750"/>
 
 <br>
 
-## Catalog
-- [Installation](#installation)
-- [FACTR Teleop](#factr-teleop)
-- [Data Collection](#data-collection)
-- [Training and Deployment](#training-and-deployment)
-- [License and Acknowledgements](#license-and-acknowledgements)
-- [Citation](#citation)
+## 目录
+- [安装](#安装)
+- [FACTR 遥操作](#factr-遥操作)
+- [数据采集](#数据采集)
+- [训练与部署](#训练与部署)
+- [许可与致谢](#许可与致谢)
+- [引用](#引用)
 
 
-## Installation
+## 安装
 
-This repository requires **ROS 2**.
-If you have not installed ROS 2 yet, follow the official [ROS 2 installation guide](https://docs.ros.org/en/humble/Tutorials/Beginner-Client-Libraries/Creating-A-Workspace/Creating-A-Workspace.html).
+本仓库需要 **ROS 2**。
+如果您尚未安装 ROS 2，请按照官方的 [ROS 2 安装指南](https://docs.ros.org/en/humble/Tutorials/Beginner-Client-Libraries/Creating-A-Workspace/Creating-A-Workspace.html) 进行安装。
 
-### Provided ROS 2 Packages
+### 提供的 ROS 2 包
 
-The following ROS 2 packages are included in this repository:
+本仓库包含以下 ROS 2 包：
 
-- **`factr_teleop`**: Core teleoperation package implementing the FACTR low-cost force-feedback teleoperation system. Provides leader arm control with gravity compensation, null-space regulation, friction compensation, and force-feedback capabilities.
+- **`factr_teleop`**: 核心遥操作包，实现了 FACTR 低成本力反馈遥操作系统。提供主控臂控制功能，包括重力补偿、零空间调节、摩擦补偿和力反馈功能。
 
-- **`bc`**: Behavior Cloning package for data collection and policy rollout. Includes nodes for recording teleoperation data, synchronizing data streams, replaying trajectories, and deploying trained policies.
+- **`bc`**: 行为克隆包，用于数据采集和策略部署。包含用于记录遥操作数据、同步数据流、回放轨迹和部署训练好的策略的节点。
 
-- **`cameras`**: Camera interface package providing ROS 2 nodes for running cameras (ZED and RealSense) used during teleoperation and data collection.
+- **`cameras`**: 相机接口包，提供用于运行遥操作和数据采集过程中使用的相机（ZED 和 RealSense）的 ROS 2 节点。
 
-- **`python_utils`**: Python utility functions package containing common utilities such as ZMQ messaging, global configurations, and helper functions used across other packages.
+- **`python_utils`**: Python 工具函数包，包含通用工具，如 ZMQ 消息传递、全局配置和在其他包中使用的辅助函数。
 
-These packages are located in:
+这些包位于：
 
 ```
 <repo_root>/src
 ```
 
-### ROS 2 Workspace Setup
+### ROS 2 工作空间设置
 
-These packages must reside within a **ROS 2 workspace**. If you do not already have one, create a workspace by following the [ROS 2 workspace tutorial](https://docs.ros.org/en/humble/Tutorials/Beginner-Client-Libraries/Creating-A-Workspace/Creating-A-Workspace.html).
+这些包必须位于 **ROS 2 工作空间** 内。如果您还没有工作空间，请按照 [ROS 2 工作空间教程](https://docs.ros.org/en/humble/Tutorials/Beginner-Client-Libraries/Creating-A-Workspace/Creating-A-Workspace.html) 创建一个。
 
-Then:
+然后：
 
-1. Copy the four provided packages into your workspace's `src/` directory.
-2. Ensure to source the ROS2 setup script in your terminal
+1. 将提供的四个包复制到您工作空间的 `src/` 目录中。
+2. 确保在终端中 source ROS2 设置脚本
    ```bash
    source /opt/ros/<ROS-Distribution>/setup.bash
    ```
-   Note that this command should be run everytime you open a new terminal.
-3. From the root of your workspace, build the workspace via:
+   注意：每次打开新终端时都需要运行此命令。
+3. 从工作空间根目录，通过以下命令构建工作空间：
    ```bash
    colcon build --symlink-install
    ```
-   This should create the following folders in your workspace root
+   这应该会在您的工作空间根目录中创建以下文件夹
    ```bash
    build  install  log  src
    ```
-4. From the root of your workspace, source the overlay via
+4. 从工作空间根目录，通过以下命令 source 覆盖层：
    ```bash
    source install/local_setup.bash
    ```
-   Note that this command should also be run everytime you open a new terminal.
+   注意：每次打开新终端时也需要运行此命令。
 
-> For more guidance, refer to the [ROS 2 Tutorial](https://docs.ros.org/en/humble/Tutorials/Beginner-Client-Libraries/Creating-A-Workspace/Creating-A-Workspace.html).
+> 更多指导，请参考 [ROS 2 教程](https://docs.ros.org/en/humble/Tutorials/Beginner-Client-Libraries/Creating-A-Workspace/Creating-A-Workspace.html)。
 
-### Additional Python Dependencies
+### 额外的 Python 依赖
 
-Install [ZMQ](https://zeromq.org/):
+安装 [ZMQ](https://zeromq.org/)：
 
 ```bash
 pip install zmq
 ```
-Install [Pinocchio](https://stack-of-tasks.github.io/pinocchio/):
+安装 [Pinocchio](https://stack-of-tasks.github.io/pinocchio/)：
 ```bash
 sudo apt install ros-<ROS-Distribution>-pinocchio
 ```
-- For example,
+- 例如，
    ```bash
    sudo apt install ros-humble-pinocchio
    ```
-Alternatively, try the following via pip.
+或者，可以通过 pip 尝试以下方式：
 ```bash
 python -m pip install pin
 ```
 
-Finally, navigate to the Dynamixel submodule and install it via:
+最后，导航到 Dynamixel 子模块并通过以下方式安装：
 ```bash
 cd <repo_root>/src/factr_teleop/factr_teleop/dynamixel
 pip install -e python
 ```
 
 
-## FACTR Teleop
-Instructions for setting up FACTR leader arms and running the provided example demos can be found 
-[here](src/factr_teleop/README.md).
+## FACTR 遥操作
+有关设置 FACTR 主控臂和运行提供的示例演示的说明，请参见
+[此处](src/factr_teleop/README.md)。
 
 
 
-## Data Collection
-We provide instructions and sample data collection scripts in ROS2. You might need your custom nodes for robots and sensors to run the system. In our case, the collected data is saved in following format:
-### Data Structure
-Each trajectory is saved as a separate pickle file. Each pickle file contains a dictionary with the following structure:
+## 数据采集
+我们提供 ROS2 中的说明和示例数据采集脚本。您可能需要自定义的机器人和传感器节点来运行系统。在我们的实现中，采集的数据按以下格式保存：
+### 数据结构
+每个轨迹保存为单独的 pickle 文件。每个 pickle 文件包含一个具有以下结构的字典：
 ```
 trajectory.pkl
 ├── "data" : dict
@@ -121,20 +119,20 @@ trajectory.pkl
     ├── "topic_name_2" : list[timestamps]
     └── ...
 ```
-### Key Components:
+### 关键组件：
 
-- **data**: A dictionary where:
-  - Keys are the data source names (ROS topic names in our implementation)
-  - Values are lists containing the actual data points (low-dimensional states or images)
+- **data**: 一个字典，其中：
+  - 键是数据源名称（在我们的实现中是 ROS 话题名称）
+  - 值是包含实际数据点的列表（低维状态或图像）
 
-- **timestamps**: A dictionary where:
-  - Keys are the same data source names as in the "data" dictionary
-  - Values are lists containing the timestamps when each corresponding data point was recorded
+- **timestamps**: 一个字典，其中：
+  - 键与 "data" 字典中的数据源名称相同
+  - 值是包含每个对应数据点记录时间戳的列表
 
-*Note*: Different data sources may log at different frequencies, resulting in varying list lengths across data sources. The timestamps are crucial for properly aligning and post-processing the data.
-While ROS provides synchronization APIs, we chose to record raw timestamps and perform post-processing to allow for greater flexibility in data analysis and alignment.
+*注意*：不同的数据源可能以不同的频率记录，导致不同数据源的列表长度不同。时间戳对于正确对齐和后处理数据至关重要。
+虽然 ROS 提供了同步 API，但我们选择记录原始时间戳并执行后处理，以便在数据分析和对齐方面具有更大的灵活性。
 ```python
-# Example of a trajectory structure
+# 轨迹结构示例
 {
     "data": {
         "/camera/rgb/image_raw": [image1, image2, ...],
@@ -151,31 +149,31 @@ While ROS provides synchronization APIs, we chose to record raw timestamps and p
 
 
 
-## Training and Deployment
+## 训练与部署
 
-### Data Processing and Training
-Please check for detailed instructions in our [factr](https://github.com/RaindragonD/factr) repo.
+### 数据处理与训练
+请查看我们的 [factr](https://github.com/RaindragonD/factr) 仓库以获取详细说明。
 
-### Policy Rollout
+### 策略部署
 
-We provide a sample rollout script in ROS2. In our case, the rollout launch file could be called as follows: 
+我们在 ROS2 中提供了一个示例部署脚本。在我们的实现中，部署启动文件可以按以下方式调用： 
 ```bash
 ros2 launch factr_teleop/launch/rollout.py
 ```
-Please checkout [rollout.py](launch/rollout.py) for details about configurations.
+请查看 [rollout.py](launch/rollout.py) 了解配置详情。
 
 
-## License and Acknowledgements
-This source code is licensed under the Apache 2.0 liscence found in the LICENSE file in the root directory of this repository.
+## 许可与致谢
+本源代码根据本仓库根目录中 LICENSE 文件中的 Apache 2.0 许可证进行许可。
 
-This project builds on top of or utilizes the following third party dependencies.
-- [GELLO](https://wuphilipp.github.io/gello_site/): Inpiration for this work.
-- [ZMQ](https://zeromq.org/): Light-weight communication between python processes.
-- [Pinocchio](https://stack-of-tasks.github.io/pinocchio/): Fast kinematics and dynamics computation for manipulation.
+本项目基于或使用了以下第三方依赖。
+- [GELLO](https://wuphilipp.github.io/gello_site/): 本工作的灵感来源。
+- [ZMQ](https://zeromq.org/): Python 进程之间的轻量级通信。
+- [Pinocchio](https://stack-of-tasks.github.io/pinocchio/): 用于操作任务的快速运动学和动力学计算。
 
 
-## Citation
-If you find this codebase useful, feel free to cite our work!
+## 引用
+如果您发现此代码库有用，欢迎引用我们的工作！
 <div style="display:flex;">
 <div>
 

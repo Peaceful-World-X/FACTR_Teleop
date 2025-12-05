@@ -23,7 +23,7 @@ import serial
 # --- 配置常量 ---
 
 # 串口连接
-DEFAULT_PORT = "/dev/ttyUSB1"
+DEFAULT_PORT = "/dev/ttyUSB2"
 DEFAULT_BAUDRATE = 115200
 DEFAULT_SLAVE_ID = 0x0009
 
@@ -293,20 +293,25 @@ class RobotiqGripperHardware:
             self.serial.flush()
 
             # 响应应为: [id][func=0x03][byte_count=6][data(6)][crc(2)]
-            header = self.serial.read(3)
-            if len(header) != 3:
-                self.logger.warning(
-                    f"Modbus 读取: 期望 3 字节头部，收到 {len(header)} 字节。"
-                )
+            # 总共 3(头) + 6(数据) + 2(crc) = 11 字节
+            
+            # 直接读取全部期望字节数，这比分段读取更不容易出错
+            resp = self.serial.read(11)
+            
+            if len(resp) != 11:
+                if len(resp) > 0:
+                    self.logger.warning(
+                        f"Modbus 读取: 期望 11 字节，收到 {len(resp)} 字节。"
+                    )
+                # 如果收到 0 字节，可能是超时，在轮询中很常见，可以不打印日志或降级为 debug
                 return None
 
-            unit_id = header[0]
-            func = header[1]
-            byte_count = header[2]
+            unit_id = resp[0]
+            func = resp[1]
+            byte_count = resp[2]
 
             if unit_id != (self.slave_id & 0xFF) or func != 0x03:
-                self.logger.warning("Modbus 读取: 意外的单元 ID 或功能码。")
-                # 继续但标记为失败
+                self.logger.warning(f"Modbus 读取: 意外的单元 ID ({unit_id}) 或功能码 ({func})。")
                 return None
 
             if byte_count != 6:
@@ -315,24 +320,14 @@ class RobotiqGripperHardware:
                 )
                 return None
 
-            rest = self.serial.read(byte_count + 2)
-            if len(rest) != byte_count + 2:
-                self.logger.warning(
-                    f"Modbus 读取: 期望 {byte_count + 2} 字节，收到 {len(rest)}。"
-                )
-                return None
+            data = resp[3:9]
+            crc_bytes = resp[9:11]
 
-            data = rest[:byte_count]
-            crc_bytes = rest[byte_count:]
-
-            expected_crc = self._compute_crc(header + data)
+            # 计算 CRC (包括头部和数据)
+            expected_crc = self._compute_crc(resp[:-2])
             recv_crc = int.from_bytes(crc_bytes, byteorder="little")
             if expected_crc != recv_crc:
                 self.logger.warning("Modbus 读取: 响应中 CRC 不匹配。")
-                return None
-
-            if len(data) != 6:
-                self.logger.warning("Modbus 读取: 状态数据长度不匹配。")
                 return None
 
             b0, b1, b2, b3, b4, b5 = data

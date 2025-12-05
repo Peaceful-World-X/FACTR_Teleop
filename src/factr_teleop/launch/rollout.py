@@ -26,7 +26,10 @@ def generate_launch_description():
         name='franka_bridge_node',          
         output='screen',                
         parameters=[
-            {"torque_feedback": True},
+            {"torque_feedback": True},      # 是否启用力矩反馈
+            {"publish_rate": 300.0},        # 状态发布频率 (Hz)，默认 300Hz
+            {"enable_left_arm": False},     # 是否启用左臂
+            {"enable_right_arm": True},     # 是否启用右臂
         ]
     )
     
@@ -42,20 +45,20 @@ def generate_launch_description():
         ]
     )
     
-    realsense_node = Node(
-        package='cameras',
-        executable='realsense',
-        name='wrist',
-        output='screen',
-        emulate_tty=True,
-        parameters=[
-            {"serial": "419122270824"},
-            {"name": "wrist"},
-        ]
-    )
+#    realsense_node = Node(
+#        package='cameras',
+#        executable='realsense',
+#        name='wrist',
+#        output='screen',
+#        emulate_tty=True,
+#        parameters=[
+#            {"serial": "419122270824"},
+#            {"name": "wrist"},
+#        ]
+#    )
     
     return LaunchDescription([
         franka_bridge_node,
-        realsense_node,
         policy_rollout_node,
+        # realsense_node,  # 已注释，如需使用请取消注释上面的定义
     ])
