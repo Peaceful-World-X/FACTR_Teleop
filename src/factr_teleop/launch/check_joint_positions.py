@@ -9,14 +9,47 @@ import numpy as np
 import math
 import time
 
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(project_root, 'src', 'factr_teleop'))
+# 计算项目根目录：从 launch/check_joint_positions.py 向上三级到项目根
+script_dir = os.path.dirname(os.path.abspath(__file__))  # launch/
+package_dir = os.path.dirname(script_dir)  # factr_teleop/
+src_dir = os.path.dirname(package_dir)  # src/
+project_root = os.path.dirname(src_dir)  # 项目根目录
+
+# 直接添加 factr_teleop 包目录到路径
+factr_teleop_pkg_dir = os.path.join(src_dir, 'factr_teleop', 'factr_teleop')
+# 确保 launch 目录不在路径中，避免导入冲突
+launch_dir = os.path.dirname(os.path.abspath(__file__))
+if launch_dir in sys.path:
+    sys.path.remove(launch_dir)
+sys.path.insert(0, factr_teleop_pkg_dir)
 dynamixel_sdk_path = os.path.join(project_root, 'src', 'factr_teleop', 'factr_teleop', 'dynamixel', 'python', 'src')
 if os.path.exists(dynamixel_sdk_path):
     sys.path.insert(0, dynamixel_sdk_path)
 
-from factr_teleop.factr_teleop import find_ttyusb
-from factr_teleop.dynamixel.driver import DynamixelDriver
+# 直接定义 find_ttyusb 函数，避免导入整个 factr_teleop 模块（它依赖 ROS）
+def find_ttyusb(port_name):
+    """查找底层的 ttyUSB 设备。
+    
+    给定在配置中使用的设备名（例如由 /dev/serial/by-id 提供的符号链接名），
+    返回实际的 ttyUSB 设备名（例如 "ttyUSB0"）。如果找不到或解析失败，抛出异常并给出详细信息。
+    """
+    base_path = "/dev/serial/by-id/"
+    full_path = os.path.join(base_path, port_name)
+    if not os.path.exists(full_path):
+        raise Exception(f"Port '{port_name}' does not exist in {base_path}.")
+    try:
+        resolved_path = os.readlink(full_path)
+        actual_device = os.path.basename(resolved_path)
+        if actual_device.startswith("ttyUSB"):
+            return actual_device
+        else:
+            raise Exception(
+                f"The port '{port_name}' does not correspond to a ttyUSB device. It links to {resolved_path}."
+            )
+    except Exception as e:
+        raise Exception(f"Unable to resolve the symbolic link for '{port_name}'. {e}")
+
+from dynamixel.driver import DynamixelDriver
 import yaml
 
 

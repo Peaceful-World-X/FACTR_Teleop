@@ -14,6 +14,10 @@ arm_teleop:  # 机械臂遥操作配置部分
   arm_joint_limits_max: [2.8973, 1.7628, 2.8973, -0.8698, 2.8973, 3.7525, 2.8973]  # 各关节的最大角度限制（弧度）
   arm_joint_limits_min: [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973]  # 各关节的最小角度限制（弧度）
   arm_joint_limits_safety_margin: 0.1  # 关节限位安全边距（弧度），用于避免达到硬限位
+  # Leader 到 Follower 的关节偏移量配置（可选）
+  joint_offset: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.57]  # 每个关节的偏移量（弧度），默认全为 0.0
+  # 映射公式：follower_joint_pos = leader_joint_pos + joint_offset[i]
+  # 示例：如果设置为 [0.0, 0.0, 0.0, -1.57, 0.0, 0.0, 0.0]，则 Leader 的关节 3 的 90 度会映射到 Follower 的 0 度
   initialization:  # 初始化配置子部分
     # The expected leader arm joint position before launching the script
     calibration_joint_pos: [0, 0, 0, -1.57, 0, 1.57, 1.57]  # 校准位置：启动前 leader arm 应该放置的关节位置（弧度），用于校准舵机偏移

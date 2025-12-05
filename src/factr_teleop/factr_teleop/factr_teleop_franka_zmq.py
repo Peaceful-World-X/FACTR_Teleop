@@ -48,6 +48,20 @@ class FACTRTeleopFrankaZMQ(FACTRTeleop):
         self.gripper_feedback_gain = self.config["controller"]["gripper_feedback"]["gain"]
         self.gripper_torque_ema_beta = self.config["controller"]["gripper_feedback"]["ema_beta"]
         self.gripper_external_torque = 0.0
+        
+        # 配置 Leader 到 Follower 的关节偏移量
+        arm_config = self.config.get("arm_teleop", {})
+        # 关节偏移量：follower_joint_pos = leader_joint_pos + joint_offset[i]
+        self.joint_offset = np.array(arm_config.get("joint_offset", [0.0] * self.num_arm_joints))
+        
+        # 验证偏移量配置
+        if len(self.joint_offset) != self.num_arm_joints:
+            raise ValueError(f"joint_offset 长度 ({len(self.joint_offset)}) 必须等于关节数量 ({self.num_arm_joints})")
+        
+        # 记录配置信息
+        if np.any(self.joint_offset != 0.0):
+            self.get_logger().info(f"关节偏移量配置: {self.joint_offset}")
+            self.get_logger().info(f"  示例：Leader 关节 0 的 0 度将映射到 Follower 的 {np.degrees(self.joint_offset[0]):.2f} 度")
 
     def set_up_communication(self):
         if self.name == "left":
@@ -104,10 +118,13 @@ class FACTRTeleopFrankaZMQ(FACTRTeleop):
         return external_torque
 
     def update_communication(self, leader_arm_pos, leader_gripper_pos):
-        # 将 leader 的关节位置发送为 follower 的位置目标（ZMQ 发布）
-        self.franka_cmd_pub.send_message(leader_arm_pos)
-        # 将目标位置命令也转发为 ROS 消息以便记录/调试
-        self.cmd_franka_pos_pub.publish(create_array_msg(leader_arm_pos))
+        # 应用关节偏移量：follower_joint_pos = leader_joint_pos + joint_offset
+        follower_arm_pos = leader_arm_pos + self.joint_offset
+        
+        # 将映射后的 follower 关节位置发送为位置目标（ZMQ 发布）
+        self.franka_cmd_pub.send_message(follower_arm_pos)
+        # 将目标位置命令也转发为 ROS 消息以便记录/调试（发送映射后的位置）
+        self.cmd_franka_pos_pub.publish(create_array_msg(follower_arm_pos))
 
         # 发送夹爪目标到 follower
         self.cmd_gripper_pos_pub.publish(create_array_msg([leader_gripper_pos]))
