@@ -32,7 +32,7 @@ class RealSenseNode(Node):
     def __init__(self):
         super().__init__('realsense_node')
 
-        self.declare_parameter('serial', "023322060631")
+        self.declare_parameter('serial', "419122270824")
         self.declare_parameter('name', "realsense")
         
         self.rs_serial = self.get_parameter('serial').value
@@ -91,7 +91,7 @@ class RealSenseNode(Node):
         return depth_msg
 
     def timer_callback(self):
-        self.get_logger().info(f"RS alive")
+        # self.get_logger().info(f"RS alive")  # 注释掉频繁的心跳输出
         start = time.time()
         frames = self.pipeline.wait_for_frames()
         aligned_frames = self.align.process(frames)

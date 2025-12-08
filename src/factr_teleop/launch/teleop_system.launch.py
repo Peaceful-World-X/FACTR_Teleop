@@ -28,7 +28,7 @@ def generate_launch_description():
         emulate_tty=True,
         parameters=[
             # 串口配置
-            # {"port": "/dev/ttyUSB2"},  # 默认: /dev/ttyUSB2
+            # {"port": "/dev/ttyUSB1"},  # 默认: /dev/ttyUSB1
             # {"baudrate": 115200},      # 默认: 115200
             # {"slave_id": 9},           # 默认: 9
             

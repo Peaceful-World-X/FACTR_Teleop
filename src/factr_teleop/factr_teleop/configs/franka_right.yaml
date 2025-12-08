@@ -30,7 +30,7 @@ controller:  # 控制器配置部分
   frequency: 500  # 控制循环频率（Hz），500Hz 表示每秒执行 500 次控制循环
   torque_feedback:  # 力矩反馈配置子部分
     enable: True  # 是否启用力矩反馈（True=启用，False=禁用）
-    gain: 2  # 力矩反馈增益系数
+    gain: 1.5  # 力矩反馈增益系数
     damping: 0.0  # 力矩反馈阻尼系数
     motor_scalar: 94.5652173913  # 电机标量，用于力矩单位转换
   gravity_comp:  # 重力补偿配置子部分

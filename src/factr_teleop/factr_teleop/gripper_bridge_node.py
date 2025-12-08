@@ -22,9 +22,10 @@ import serial
 # --- 配置常量 ---
 
 # 串口连接
-DEFAULT_PORT = "/dev/ttyUSB2"
+DEFAULT_PORT = "/dev/ttyUSB1"
 DEFAULT_BAUDRATE = 115200
 DEFAULT_SLAVE_ID = 0x0009
+DEFAULT_SERIAL_TIMEOUT = 0.5  # 秒，过短可能导致读取响应失败，过长会让初始化看起来“卡住”
 
 # Modbus 寄存器地址
 REG_CMD_START = 0x03E8    # 1000: 动作请求
@@ -71,20 +72,25 @@ BIT_gGTO = 3
 class RobotiqGripperHardware:
     """处理与 Robotiq 2F-85 夹爪的低层 Modbus RTU 通信。"""
 
-    def __init__(self, port: str = DEFAULT_PORT, slave_id: int = DEFAULT_SLAVE_ID, baudrate: int = DEFAULT_BAUDRATE):
+    def __init__(self, port: str = DEFAULT_PORT, slave_id: int = DEFAULT_SLAVE_ID, baudrate: int = DEFAULT_BAUDRATE, timeout: float = DEFAULT_SERIAL_TIMEOUT):
         """使用原始 Modbus RTU 通过串口初始化硬件接口。
 
         Args:
             port: 串口路径（例如 '/dev/ttyUSB2'）。
             slave_id: Modbus 从站 ID（默认 9）。
             baudrate: 串口波特率（默认 115200）。
+            timeout: 串口超时时间（秒）
         """
         self.port = port
         self.slave_id = slave_id
         self.baudrate = baudrate
+        self.timeout = timeout
         self.serial: Optional[serial.Serial] = None
-        self.lock = threading.Lock()
+        # 使用可重入锁，避免在初始化流程中嵌套调用（initialize -> reset_gripper -> emergency_release）
+        # 造成的死锁。
+        self.lock = threading.RLock()
         self.logger = logging.getLogger("RobotiqHW")
+        self.logger.setLevel(logging.INFO)
 
     def connect(self) -> bool:
         """打开底层串口。"""
@@ -95,7 +101,8 @@ class RobotiqGripperHardware:
                 bytesize=serial.EIGHTBITS,
                 parity=serial.PARITY_NONE,
                 stopbits=serial.STOPBITS_ONE,
-                timeout=0.2,
+                timeout=self.timeout,
+                write_timeout=self.timeout,
             )
             return True
         except serial.SerialException as exc:
@@ -174,32 +181,19 @@ class RobotiqGripperHardware:
         Returns:
             成功返回 True
         """
-        self.logger.info("执行紧急释放序列...")
-        
         with self.lock:
-            # 步骤 1: 发送去激活命令 (Act=0) 清除错误状态
-            self.logger.info("  发送去激活命令 (Act=0)...")
             if not self._write_command(act=0, gto=0, r_pr=0, r_sp=0, r_fr=0):
                 self.logger.warning("紧急释放: 去激活命令发送失败")
                 return False
             
-            # 步骤 2: 等待夹爪复位（至少 100ms，建议 200-500ms）
             time.sleep(0.3)
             
-            # 步骤 3: 验证状态已清除（可选，但有助于诊断）
             status = self._read_status_raw()
             if status:
-                g_act = status["gACT_byte"] & 0x01
-                g_sta = (status["gACT_byte"] >> 4) & 0x03
                 g_flt = status["gFLT"]
-                
-                self.logger.info(f"  紧急释放后状态: gACT={g_act}, gSTA={g_sta}, gFLT={g_flt}")
-                
-                # gFLT=0 表示无故障，gACT=0 表示未激活（符合预期）
                 if g_flt != 0:
-                    self.logger.warning(f"  警告: 检测到故障代码 gFLT={g_flt}，但继续激活流程")
+                    self.logger.warning(f"紧急释放后仍检测到故障代码: gFLT={g_flt}")
             
-            self.logger.info("紧急释放序列完成")
             return True
     
     def reset_gripper(self) -> bool:
@@ -222,8 +216,6 @@ class RobotiqGripperHardware:
             return False
 
         with self.lock:
-            self.logger.info("发送夹爪完全复位命令 (rACT=0)...")
-
             # 构建复位命令帧：将所有6个字节设置为0
             # [id][func=0x10][addr_hi][addr_lo][qty_hi][qty_lo][byte_count][data...][crc_lo][crc_hi]
             pdu = bytearray()
@@ -265,7 +257,6 @@ class RobotiqGripperHardware:
                     self.logger.warning("复位命令: 意外的单元 ID 或功能码。")
                     return False
 
-                self.logger.info("夹爪完全复位成功")
                 return True
 
             except serial.SerialException as exc:
@@ -279,58 +270,55 @@ class RobotiqGripperHardware:
         1. 完全复位夹爪（清除激活位）
         2. 执行紧急释放序列（清除可能的错误状态）
         3. 发送激活命令 (Act=1)
-        4. 等待状态变为 gSTA=3, gACT=1
+        4. 等待状态变为 gACT=1, gFLT=0
 
         Returns:
             成功返回 True
         """
         with self.lock:
             # 步骤 1: 完全复位夹爪
-            self.logger.info("开始夹爪初始化流程...")
-            if not self.reset_gripper():
+            reset_result = self.reset_gripper()
+            if not reset_result:
                 self.logger.warning("夹爪复位失败，但继续尝试激活...")
 
             # 步骤 2: 紧急释放（清除错误状态）
-            if not self.emergency_release():
+            release_result = self.emergency_release()
+            if not release_result:
                 self.logger.warning("紧急释放失败，但继续尝试激活...")
 
-            # 步骤 3: 发送激活命令（不发送位置命令，保持当前状态）
-            # 注意：r_pr=0 在某些情况下可能被解释为闭合，所以使用中间位置（张开）
-            # 或者使用 GTO=0 来确保不执行移动，只激活
-            self.logger.info("发送激活命令 (Act=1, GTO=0, 不移动)...")
-            # 使用张开位置（REG_POS_OPEN=3）作为初始位置，避免意外闭合
-            if not self._write_command(act=1, gto=0, r_pr=REG_POS_OPEN, r_sp=255, r_fr=150):
-                self.logger.error("夹爪激活 Modbus 命令失败。")
+            # 步骤 3: 发送激活命令
+            activate_result = self._write_command(act=1, gto=0, r_pr=REG_POS_OPEN, r_sp=255, r_fr=150)
+            if not activate_result:
+                self.logger.error("夹爪激活失败：Modbus 命令发送失败")
                 return False
             
-            # 步骤 3: 等待状态变为 gSTA=3, gACT=1
-            timeout = 3.0  # 增加超时时间以确保激活完成
+            # 步骤 4: 等待状态变为激活且无故障
+            timeout = 3.0
             start_time = time.time()
             check_interval = 0.1
-            
-            self.logger.info("等待夹爪激活 (gSTA=3, gACT=1)...")
-            
+
+            check_count = 0
             while time.time() - start_time < timeout:
+                check_count += 1
                 status = self._read_status_raw()
-                if status:
-                    g_act = status["gACT_byte"] & 0x01
-                    g_sta = (status["gACT_byte"] >> 4) & 0x03
-                    g_flt = status["gFLT"]
-                    
-                    # 检查是否达到目标状态
-                    if g_sta == 3 and g_act == 1:
-                        self.logger.info(f"夹爪激活成功！状态: gSTA={g_sta}, gACT={g_act}, gFLT={g_flt}")
-                        return True
-                    
-                    # 如果检测到故障，记录但继续等待
-                    if g_flt != 0:
-                        self.logger.warning(f"激活过程中检测到故障: gFLT={g_flt}, gSTA={g_sta}, gACT={g_act}")
-                    
-                    # 记录中间状态（每 0.5 秒一次，避免日志过多）
-                    elapsed = time.time() - start_time
-                    if int(elapsed * 2) != int((elapsed - check_interval) * 2):
-                        self.logger.info(f"  等待激活中... gSTA={g_sta}, gACT={g_act} (已等待 {elapsed:.1f}s)")
-                
+
+                if status is None:
+                    time.sleep(check_interval)
+                    continue
+
+                g_act = status["gACT_byte"] & 0x01
+                g_sta = (status["gACT_byte"] >> 4) & 0x03
+                g_flt = status["gFLT"]
+
+                # 检查是否达到目标状态
+                if g_act == 1 and g_flt == 0:
+                    self.logger.info(f"夹爪激活成功 (gSTA={g_sta}, gACT={g_act}, gFLT={g_flt})")
+                    return True
+
+                # 如果检测到故障，记录警告
+                if g_flt != 0:
+                    self.logger.warning(f"激活过程中检测到故障: gFLT={g_flt}, gSTA={g_sta}, gACT={g_act}")
+
                 time.sleep(check_interval)
             
             # 超时后检查最终状态
@@ -340,8 +328,7 @@ class RobotiqGripperHardware:
                 g_sta = (status["gACT_byte"] >> 4) & 0x03
                 g_flt = status["gFLT"]
                 self.logger.error(
-                    f"夹爪激活超时！最终状态: gSTA={g_sta}, gACT={g_act}, gFLT={g_flt} "
-                    f"(期望: gSTA=3, gACT=1)"
+                    f"夹爪激活超时！最终状态: gSTA={g_sta}, gACT={g_act}, gFLT={g_flt}"
                 )
             else:
                 self.logger.error("夹爪激活超时：无法读取状态")
@@ -606,17 +593,21 @@ class GripperBridgeNode(Node):
         self.declare_parameter('baudrate', DEFAULT_BAUDRATE)
         self.declare_parameter('slave_id', DEFAULT_SLAVE_ID)
         self.declare_parameter('poll_rate', 50.0)  # 赫兹
+        self.declare_parameter('serial_timeout', DEFAULT_SERIAL_TIMEOUT)  # 串口超时时间
         self.declare_parameter('control_mode', CONTROL_MODE_ABSOLUTE)  # 控制模式: "relative" 或 "absolute"
         self.declare_parameter('leader_gripper_min_rad', 0.0)  # Leader 夹爪最小位置（弧度）
         self.declare_parameter('leader_gripper_max_rad', 0.8)  # Leader 夹爪最大位置（弧度）
+        self.declare_parameter('skip_init', False)  # 诊断用：跳过初始化
 
         port = self.get_parameter('port').value
         baudrate = self.get_parameter('baudrate').value
         slave_id = self.get_parameter('slave_id').value
         self.poll_rate = self.get_parameter('poll_rate').value
+        serial_timeout = self.get_parameter('serial_timeout').value
         self.control_mode = self.get_parameter('control_mode').value
         self.leader_gripper_min_rad = self.get_parameter('leader_gripper_min_rad').value
         self.leader_gripper_max_rad = self.get_parameter('leader_gripper_max_rad').value
+        self.skip_init = self.get_parameter('skip_init').value
 
         self.get_logger().info(f"初始化夹爪桥接节点，端口: {port} (ID: {slave_id}, 波特率: {baudrate})...")
         self.get_logger().info(f"控制模式: {self.control_mode}")
@@ -625,19 +616,27 @@ class GripperBridgeNode(Node):
             self.get_logger().info(f"  Follower 夹爪范围: [{WIDTH_MIN:.3f}, {WIDTH_MAX:.3f}] 米")
 
         # 初始化硬件
-        self.hw = RobotiqGripperHardware(port, slave_id, baudrate)
+        self.hw = RobotiqGripperHardware(port, slave_id, baudrate, timeout=serial_timeout)
         if not self.hw.connect():
             self.get_logger().error("无法连接到夹爪串口。")
             # 我们不在这里退出以保持节点存活用于诊断，
             # 但功能将失败。
             # 或者，可以使用 sys.exit(1)
+        elif self.skip_init:
+            self.get_logger().warn("skip_init=true，跳过硬件初始化（诊断模式）")
+            self.is_activated = True
         else:
-            self.get_logger().info("串口已连接。初始化夹爪...")
-            if self.hw.initialize():
-                self.get_logger().info("夹爪初始化成功。")
-                self.is_activated = True
-            else:
-                self.get_logger().error("夹爪初始化失败。")
+            self.get_logger().info("初始化夹爪...")
+            try:
+                init_success = self.hw.initialize()
+                if init_success:
+                    self.get_logger().info("夹爪初始化成功")
+                    self.is_activated = True
+                else:
+                    self.get_logger().error("夹爪初始化失败")
+                    self.is_activated = False
+            except Exception as e:
+                self.get_logger().error(f"初始化过程中发生异常: {e}")
                 self.is_activated = False
 
         # ROS 订阅者

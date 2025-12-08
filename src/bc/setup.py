@@ -11,7 +11,7 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
     ],
-    install_requires=['setuptools'],
+    install_requires=['setuptools', 'termcolor', 'pynput'],
     zip_safe=True,
     maintainer='Jason Jingzhou Liu and Yulong Li',
     maintainer_email='liujason@cmu.edu',

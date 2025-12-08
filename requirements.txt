@@ -9,6 +9,10 @@ opencv-python>=4.5.0
 hydra-core>=1.3.0
 pynput>=1.7.0
 
+# Camera dependencies (optional)
+# pyrealsense2>=2.50.0  # RealSense SDK
+# pyzed>=4.0.0         # ZED SDK
+
 # Note: dynamixel_sdk needs to be installed separately:
 # cd src/factr_teleop/factr_teleop/dynamixel/python && pip install -e .
 

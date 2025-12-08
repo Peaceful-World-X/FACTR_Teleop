@@ -33,9 +33,26 @@ INITIAL_POSITION = np.array([
     0.00456447, 1.56894485, 1.56894485
 ], dtype=np.float64)
 
-RELATIVE_DYNAMICS_FACTOR = 0.2
+RELATIVE_DYNAMICS_FACTOR = 0.1
 STATE_PUB_FREQUENCY = 100.0  # Hz
 ZMQ_CONNECTION_WAIT_TIME = 2.0  # seconds
+CMD_RATE_LIMIT = 0.02  # 最小命令间隔 (50Hz)，防止过快命令导致的安全错误
+POSITION_FILTER_ALPHA = 0.5  # 位置滤波系数，0.3表示较平滑，1.0表示无滤波
+
+# Franka Panda 关节限制 (弧度)
+JOINT_LIMITS = np.array([
+    [-2.8973, 2.8973],    # joint 1
+    [-1.7628, 1.7628],    # joint 2
+    [-2.8973, 2.8973],    # joint 3
+    [-3.0718, -0.0698],   # joint 4
+    [-2.8973, 2.8973],    # joint 5
+    [-0.0175, 3.7525],    # joint 6
+    [-1.48, 3.0718]     # joint 7
+])
+
+def clamp_joints(joint_positions):
+    """限制关节位置在安全范围内"""
+    return np.clip(joint_positions, JOINT_LIMITS[:, 0], JOINT_LIMITS[:, 1])
 
 # Setup logging
 logging.basicConfig(
@@ -149,16 +166,53 @@ class FrankaFactrBridge:
             pass
 
         # Main control loop
+        last_cmd_time = 0
+        last_filtered_position = None  # 上一次滤波后的位置
+
         while self.running and not self.is_shutting_down:
             try:
+                current_time = time.time()
                 try:
                     message = self.cmd_subscriber.recv(zmq.NOBLOCK)
                     # 这里期望接收到 7 个 double（8 字节/项）
                     if len(message) == 7 * 8:  # 7 个 double（56 字节）
-                        target = np.frombuffer(message, dtype=np.float64)
-                        motion = JointMotion(target.tolist())
-                        # 异步下发控制点，底层会平滑执行
-                        self.robot.move(motion, asynchronous=True)
+                        # 速率限制：防止命令发送过于频繁
+                        if current_time - last_cmd_time >= CMD_RATE_LIMIT:
+                            target = np.frombuffer(message, dtype=np.float64)
+
+                            # 数据验证和限制
+                            # 检查 NaN/Inf
+                            if not np.isfinite(target).all():
+                                logger.warning("接收到无效关节位置（包含 NaN/Inf），跳过")
+                                continue
+
+                            # 关节限制检查和裁剪
+                            original_target = target.copy()
+                            target = clamp_joints(target)
+
+                            # 如果有裁剪，记录警告
+                            if not np.allclose(original_target, target, atol=1e-6):
+                                logger.warning(f"关节位置超出限制，已裁剪: {original_target} -> {target}")
+
+                            # 位置滤波：防止位置跳跃过大，减少振动
+                            if last_filtered_position is None:
+                                filtered_target = target
+                            else:
+                                # 指数移动平均滤波
+                                filtered_target = POSITION_FILTER_ALPHA * target + (1 - POSITION_FILTER_ALPHA) * last_filtered_position
+
+                            last_filtered_position = filtered_target.copy()
+
+                            try:
+                                motion = JointMotion(filtered_target.tolist())
+                                # 异步下发控制点，底层会平滑执行
+                                self.robot.move(motion, asynchronous=True)
+                                last_cmd_time = current_time
+                                
+                            except Exception as motion_e:
+                                logger.error(f"运动命令执行失败: {motion_e}")
+                        # else:
+                        # 命令过于频繁，静默跳过（避免日志过多）
                 except zmq.Again:
                     # 没有新命令时保持当前运动
                     pass
@@ -169,6 +223,19 @@ class FrankaFactrBridge:
 
             except Exception as e:
                 logger.error(f"Motion error: {e}")
+                # Attempt error recovery
+                try:
+                    if hasattr(self.robot, 'automatic_error_recovery'):
+                        self.robot.automatic_error_recovery()
+                    elif hasattr(self.robot, 'recover_from_errors'):
+                        self.robot.recover_from_errors()
+                except Exception as rec_e:
+                    logger.warning(f"Recovery failed: {rec_e}")
+                time.sleep(0.5)
+
+            except Exception as e:
+                logger.error(f"Motion error: {e}")
+                motion_in_progress = False  # 重置运动状态
                 # Attempt error recovery
                 try:
                     if hasattr(self.robot, 'automatic_error_recovery'):
