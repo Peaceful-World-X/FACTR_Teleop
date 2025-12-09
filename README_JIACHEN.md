@@ -40,7 +40,7 @@ chmod +x run.sh
 ```
 
 ### 程序启动
-- 程序启动前保持factr夹爪关闭
+- 保持各关节尽可能保持初始点，程序启动前保持factr夹爪关闭；夹爪启动经过校准为零点。
 
 ### 程序关闭
 - 对两个程序进行启动后需要关闭遥操程序，最好先ctrl+C掉factr_teleop teleop_system.launch.py程序，再ctrl+C掉franka_factr_bridge_franky.py程序，避免出现可能的错误
@@ -56,9 +56,12 @@ colcon build --packages-select factr_teleop
 ## 相关节点和程序
 ### 主要程序
 - **基于franky库的franka FCI和主机ZMQ的桥接程序** [franka_factr_bridge_franky.py](franka_factr_bridge_franky.py)
-
+    1. ZMQpub：发布状态：14 个 float（7 个位置 + 7 个速度）|发布力矩：7 个 float | 发布位姿16 个 float64
+    位姿信息包含：旋转和平移，左上 3x3 为末端相对基坐标系的旋转矩阵，右上 3x1（第 3 列的前 3 个元素）为平移向量（x, y, z，以米为单位）最后一行通常是 [0, 0, 0, 1]（齐次坐标）
+    2. sub：订阅主臂7 个 double（8 字节/项）位置信息
 - **夹爪的主动控制程序，接收factr端的控制信息与对franka发送夹爪控制（串口通信）**[gripper_bridge_node.py](src/factr_teleop/factr_teleop/gripper_bridge_node.py)
-
+    1. pub：发送主臂和从臂的夹爪状态0～1（0表示完全闭合，1为完全打开）
+    2. sub：订阅主臂夹爪的位置
 - **factr端的ZMQ服务，用于与桥接程序通信**[factr_teleop_franka_zmq.py ](src/factr_teleop/factr_teleop/factr_teleop_franka_zmq.py)
 
 - **ros2同时启用夹爪和factr的launch**[teleop_system.launch.py](src/factr_teleop/launch/teleop_system.launch.py)
@@ -86,5 +89,5 @@ ros2 launch factr_teleop/launch/rollout.py
 - **数采流程**
 - 关节5关节飘的问题
 - 一键启动的稳定性，有时候退出后会存在factr乱动的情况
-- 程序关闭后主动关闭终端（或改成后台运行），结束后kill
+- （已解决）程序关闭后主动关闭终端（或改成后台运行），结束后kill
 - 夹爪速度过慢 无力反馈

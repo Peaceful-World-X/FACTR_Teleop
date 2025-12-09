@@ -103,7 +103,7 @@ class FrankaFactrBridge:
         """从机器人状态中提取关节位置、速度和力矩。"""
         state = self.robot.state
 
-    # 获取关节位置与速度
+        # 获取关节位置与速度
         q = np.array(getattr(state, 'q', []))
         dq = np.array(getattr(state, 'dq', []))
 
@@ -121,9 +121,10 @@ class FrankaFactrBridge:
             tau = np.zeros(7)
 
         return q, dq, tau
-
+    
+    #后台线程：以固定频率发布机器人状态。
     def state_publisher_loop(self):
-        """后台线程：以固定频率发布机器人状态。"""
+        
         period = 1.0 / STATE_PUB_FREQUENCY
         while self.running and self.robot:
             try:
@@ -246,8 +247,10 @@ class FrankaFactrBridge:
                     logger.warning(f"Recovery failed: {rec_e}")
                 time.sleep(0.5)
 
+
+    #初始化并启动桥接程序。
     def start(self):
-        """初始化并启动桥接程序。"""
+       
         logger.info("Initializing Franka-FACTR Bridge")
 
         # Connect to robot
@@ -268,7 +271,7 @@ class FrankaFactrBridge:
 
         self.running = True
 
-    # 启动状态发布线程
+      # 启动状态发布线程
         pub_thread = threading.Thread(target=self.state_publisher_loop, daemon=True)
         pub_thread.start()
         time.sleep(0.5)
@@ -350,9 +353,9 @@ class FrankaFactrBridge:
         self._shutdown_sequence()
         logger.info("桥接已停止")
 
-
+# SIGINT 信号处理器（Ctrl-C）。
 def signal_handler(sig, frame):
-    """SIGINT 信号处理器（Ctrl-C）。"""
+    
     logger.info("收到 SIGINT，正在退出...")
     # 设置全局退出标志，让主循环停止
     if 'bridge' in globals():

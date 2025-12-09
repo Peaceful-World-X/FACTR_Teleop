@@ -120,8 +120,9 @@ class RobotiqGripperHardware:
                 # 忽略关闭时的错误
                 pass
 
+    #计算 Modbus RTU CRC16（低位在前）。
     def _compute_crc(self, data: bytes) -> int:
-        """计算 Modbus RTU CRC16（低位在前）。"""
+    
         crc = 0xFFFF
         for byte in data:
             crc ^= byte
@@ -133,6 +134,7 @@ class RobotiqGripperHardware:
                     crc >>= 1
         return crc
 
+    #将物理值（米）线性映射到寄存器值。
     def _map_to_register(self, value: float, phy_min: float, phy_max: float, 
                         reg_open: int, reg_closed: int) -> int:
         """将物理值（米）线性映射到寄存器值。
@@ -156,6 +158,7 @@ class RobotiqGripperHardware:
         
         return max(0, min(255, reg_val))
 
+    #将寄存器值线性映射到物理值。
     def _map_from_register(self, reg_val: int, phy_min: float, phy_max: float, 
                           reg_open: int, reg_closed: int) -> float:
         """将寄存器值线性映射到物理值。"""
@@ -170,6 +173,7 @@ class RobotiqGripperHardware:
         ratio = (reg_val - reg_closed) / (reg_open - reg_closed)
         return phy_min + ratio * (phy_max - phy_min)
 
+    #清除可能的错误状态。
     def emergency_release(self) -> bool:
         """执行紧急释放序列，清除可能的错误状态。
         
@@ -196,6 +200,7 @@ class RobotiqGripperHardware:
             
             return True
     
+    #完全复位夹爪，清除激活位。
     def reset_gripper(self) -> bool:
         """完全复位夹爪，清除激活位。
 
@@ -665,6 +670,7 @@ class GripperBridgeNode(Node):
         self.error_check_interval = 1.0  # 每秒检查一次错误状态
         self.is_activated = False  # 跟踪激活状态
         self.has_received_command = False  # 是否已收到第一个命令
+        self.leader_ratio = 0.0  # 0=闭合, 1=张开
 
     def cmd_callback(self, msg: JointState):
         """夹爪命令回调函数。
@@ -686,6 +692,7 @@ class GripperBridgeNode(Node):
             return
 
         try:
+            #leader发送的值为校准后弧度，开机时夹爪角度为0度
             cmd_value = float(msg.position[0])
             
             if self.control_mode == CONTROL_MODE_ABSOLUTE:
@@ -706,6 +713,7 @@ class GripperBridgeNode(Node):
                 
                 # 限制到 Follower 物理范围
                 target_m = max(WIDTH_MIN, min(WIDTH_MAX, target_m))
+                leader_ratio = max(0.0, min(1.0, ratio if self.leader_gripper_max_rad > self.leader_gripper_min_rad else 0.0))
                 
             else:
                 # 相对控制模式（保持原有逻辑）
@@ -720,10 +728,12 @@ class GripperBridgeNode(Node):
                     ratio = 0.0
                 
                 target_m = WIDTH_MIN + ratio * (WIDTH_MAX - WIDTH_MIN)
+                leader_ratio = max(0.0, min(1.0, ratio))
             
             with self.lock:
                 self.last_target_pos = target_m
                 self.has_received_command = True  # 标记已收到命令
+                self.leader_ratio = leader_ratio
                 
         except Exception as e:
             self.get_logger().warning(f"收到无效命令: {e}")
@@ -782,8 +792,9 @@ class GripperBridgeNode(Node):
         
         return True
     
+    #主循环: 检查错误 -> 读取状态 -> 发布 -> 写入最新命令。
     def control_loop(self):
-        """主循环: 检查错误 -> 读取状态 -> 发布 -> 写入最新命令。"""
+        
         # 0. 定期检查错误状态并恢复
         if not self._check_and_recover_from_error():
             # 如果恢复失败，跳过本次循环
@@ -792,13 +803,19 @@ class GripperBridgeNode(Node):
         # 1. 读取并发布状态
         try:
             pos, current, is_moving = self.hw.get_state()
+            # 归一化 follower 开度: 0=闭合,1=张开
+            follower_ratio = 0.0
+            if WIDTH_MAX > WIDTH_MIN:
+                follower_ratio = (pos - WIDTH_MIN) / (WIDTH_MAX - WIDTH_MIN)
+            follower_ratio = max(0.0, min(1.0, follower_ratio))
             
             msg = JointState()
             msg.header.stamp = self.get_clock().now().to_msg()
-            msg.name = ['gripper_finger_joint']
-            msg.position = [pos]
-            msg.effort = [current]  # 使用 effort 字段表示电流（安培）
-            # msg.velocity 如需要可以估算，但硬件不直接提供
+            # 发布两路开度（0-1）
+            msg.name = ['leader_gripper_ratio', 'follower_gripper_ratio']
+            with self.lock:
+                leader_ratio = self.leader_ratio
+            msg.position = [leader_ratio, follower_ratio]
             
             self.pub_state.publish(msg)
 

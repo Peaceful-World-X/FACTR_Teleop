@@ -70,7 +70,7 @@ def generate_launch_description():
             # {"slave_id": 9},           # 默认: 9
             
             # 控制模式配置
-            {"control_mode": "absolute"},  # "absolute" 或 "relative"，默认: "absolute"
+            {"control_mode": "relative"},  # "absolute" 或 "relative"，默认: "absolute"
             {"leader_gripper_min_rad": 0.0},   # Leader 夹爪最小位置（弧度），默认: 0.0
             {"leader_gripper_max_rad": 0.8},   # Leader 夹爪最大位置（弧度），默认: 0.8
         ]
