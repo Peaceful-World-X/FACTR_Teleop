@@ -77,7 +77,15 @@ class ZmqRosBridge(Node):
         
         while self.running and rclpy.ok():
             try:
-                socks = dict(poller.poll(timeout=100)) # 100ms timeout
+                # 检查 ZMQ context 是否仍然有效
+                try:
+                    socks = dict(poller.poll(timeout=100)) # 100ms timeout
+                except zmq.ZMQError as poll_e:
+                    if "Context was terminated" in str(poll_e):
+                        self.get_logger().info("ZMQ context 已终止，停止接收循环")
+                        break
+                    else:
+                        raise poll_e
                 
                 # 1. 处理状态 (q, dq)
                 if self.state_sub in socks:
@@ -132,13 +140,27 @@ class ZmqRosBridge(Node):
                     # 这里改为：不强制清空，每次循环只要有数据就发，
                     # 实际频率取决于 ZMQ 发送频率 ~100Hz）
                     
+            except zmq.ZMQError as zmq_e:
+                if "Context was terminated" in str(zmq_e):
+                    self.get_logger().info("ZMQ context 已终止，正常退出接收循环")
+                    break
+                else:
+                    self.get_logger().error(f"ZMQ 错误: {zmq_e}")
+                    time.sleep(0.1)
             except Exception as e:
                 self.get_logger().error(f"Error in bridge loop: {e}")
                 time.sleep(0.1)
 
     def destroy_node(self):
+        self.get_logger().info("正在关闭 ZMQ-ROS 桥接节点...")
         self.running = False
-        self.zmq_context.term()
+        # 等待一小段时间让接收循环自然结束
+        time.sleep(0.2)
+        try:
+            self.zmq_context.term()
+            self.get_logger().info("ZMQ context 已终止")
+        except Exception as e:
+            self.get_logger().warning(f"终止 ZMQ context 时出错: {e}")
         super().destroy_node()
 
 def main(args=None):

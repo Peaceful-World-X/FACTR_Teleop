@@ -157,55 +157,24 @@ class FrankaFactrBridge:
         # 末端位姿：O_T_EE 为 4x4 齐次矩阵（列主序），长度 16
         if hasattr(state, 'O_T_EE'):
             try:
-                # Franky 的 O_T_EE 可能是不同类型，尝试多种转换方式
                 pose_raw = state.O_T_EE
-                self.logger.debug(f"O_T_EE type: {type(pose_raw)}, shape: {getattr(pose_raw, 'shape', 'no shape')}")
 
-                if hasattr(pose_raw, 'as_matrix'):
+                # 优先处理已知的情况
+                if isinstance(pose_raw, np.ndarray):
+                    # 如果已经是 numpy 数组，直接使用
+                    pose_mat = pose_raw.astype(np.float64).flatten(order='F')
+                elif hasattr(pose_raw, 'as_matrix'):
                     # 如果是 Affine 对象，使用 as_matrix() 方法
                     pose_mat = np.array(pose_raw.as_matrix(), dtype=np.float64).flatten(order='F')
                 elif hasattr(pose_raw, 'matrix'):
-                    # 备用方法：matrix 可能是属性或方法
-                    try:
-                        # 检查 matrix 是属性还是方法
-                        matrix_attr = getattr(pose_raw, 'matrix')
-                        if callable(matrix_attr):
-                            # 如果是方法，调用它
-                            matrix_data = matrix_attr()
-                        else:
-                            # 如果是属性，直接使用
-                            matrix_data = matrix_attr
-
-                        # 处理获取到的矩阵数据
-                        if hasattr(matrix_data, '__array__') or isinstance(matrix_data, np.ndarray):
-                            # 直接转换为数组
-                            pose_mat = np.array(matrix_data, dtype=np.float64).flatten(order='F')
-                        elif hasattr(matrix_data, 'as_matrix'):
-                            pose_mat = np.array(matrix_data.as_matrix(), dtype=np.float64).flatten(order='F')
-                        else:
-                            # 尝试直接构造 4x4 单位矩阵
-                            self.logger.warning(f"Unknown matrix type: {type(matrix_data)}, using identity")
-                            pose_mat = np.eye(4, dtype=np.float64).flatten(order='F')
-                    except Exception as matrix_e:
-                        self.logger.warning(f"Failed to get matrix from matrix attribute/method: {matrix_e}")
-                        pose_mat = np.zeros(16, dtype=np.float64)
-                elif isinstance(pose_raw, np.ndarray):
-                    # 如果已经是 numpy 数组
-                    if pose_raw.size == 16:
-                        pose_mat = pose_raw.astype(np.float64).flatten(order='F')
-                    elif pose_raw.size == 4:
-                        # 可能是 2x2 数组，需要扩展为 4x4
-                        pose_4x4 = np.eye(4, dtype=np.float64)
-                        pose_4x4[:2, :2] = pose_raw
-                        pose_mat = pose_4x4.flatten(order='F')
-                    else:
-                        pose_mat = pose_raw.astype(np.float64).flatten()[:16]  # 取前16个元素
+                    # matrix 属性（通常是 numpy 数组）
+                    matrix_data = pose_raw.matrix
+                    pose_mat = np.array(matrix_data, dtype=np.float64).flatten(order='F')
                 else:
-                    # 其他情况，尝试转换为数组
-                    arr = np.array(pose_raw, dtype=np.float64)
-                    pose_mat = arr.flatten(order='F')[:16]  # 确保是16个元素
+                    # 其他情况，尝试直接转换
+                    pose_mat = np.array(pose_raw, dtype=np.float64).flatten(order='F')
             except Exception as e:
-                self.logger.warning(f"Failed to convert pose: {e}, type: {type(state.O_T_EE)}")
+                self.logger.warning(f"Failed to convert pose: {e}, type: {type(pose_raw)}")
                 pose_mat = np.zeros(16, dtype=np.float64)
         else:
             pose_mat = np.zeros(16, dtype=np.float64)
