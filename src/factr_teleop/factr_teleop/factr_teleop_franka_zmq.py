@@ -109,6 +109,12 @@ class FACTRTeleopFrankaZMQ(FACTRTeleop):
     
     def get_leader_arm_external_joint_torque(self):
         external_torque = self.franka_torque_sub.message
+        if external_torque is None:
+            # 如果没有收到力矩数据，返回全零数组
+            external_torque = np.zeros(7, dtype=np.float64)
+            self.get_logger().debug("No torque data received from ZMQ, returning zeros")
+        else:
+            self.get_logger().debug(f"Received torque data: {external_torque.shape}")
         # 将 Franka 的外部关节力矩转发到 ROS
         self.obs_franka_torque_pub.publish(create_array_msg(external_torque))
         return external_torque
@@ -127,7 +133,10 @@ class FACTRTeleopFrankaZMQ(FACTRTeleop):
 
         # 将当前 Franka 跟随臂的关节状态转为 ROS 消息（用于行为克隆与数据采集）
         franka_state = self.franka_joint_state_sub.message
-        self.obs_franka_state_pub.publish(create_array_msg(franka_state))
+        if franka_state is not None:
+            self.obs_franka_state_pub.publish(create_array_msg(franka_state))
+        else:
+            self.get_logger().debug("No Franka state data received from ZMQ")
         
 
 def main(args=None):

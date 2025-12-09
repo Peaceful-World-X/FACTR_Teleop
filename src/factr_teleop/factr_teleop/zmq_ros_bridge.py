@@ -55,6 +55,9 @@ class ZmqRosBridge(Node):
         
         # /franka/end_effector_pose: 4x4 矩阵展平
         self.pose_pub = self.create_publisher(Float64MultiArray, '/franka/end_effector_pose', 10)
+
+        # /franka/right/obs_franka_torque: 仅发布 effort (7 维)
+        self.torque_pub = self.create_publisher(JointState, '/franka/right/obs_franka_torque', 10)
         
         # 启动接收线程
         self.thread = threading.Thread(target=self.receive_loop, daemon=True)
@@ -117,6 +120,12 @@ class ZmqRosBridge(Node):
                     joint_msg.effort = current_tau.astype(float).tolist()
                     
                     self.joint_pub.publish(joint_msg)
+
+                    # 单独发布力矩到 /franka/right/obs_franka_torque，供 ROS teleop 节点使用
+                    torque_msg = JointState()
+                    torque_msg.header.stamp = joint_msg.header.stamp
+                    torque_msg.effort = current_tau.astype(float).tolist()
+                    self.torque_pub.publish(torque_msg)
                     
                     # 清空缓存（或保留最新值？通常保留最新值更稳健，这里简单起见清空，
                     # 但考虑到 ZMQ 频率可能不同步，保留最新值可能更好。

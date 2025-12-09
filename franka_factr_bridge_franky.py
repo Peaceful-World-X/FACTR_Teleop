@@ -77,6 +77,9 @@ class FrankaFactrBridge:
         self.pose_publisher = None
         self.is_shutting_down = False  # 标记是否正在关闭
 
+        # 设置 logger
+        self.logger = logging.getLogger("FrankaFactrBridge")
+
         # 注册退出时的清理函数
         atexit.register(self._cleanup_on_exit)
 
@@ -109,29 +112,101 @@ class FrankaFactrBridge:
 
     # 从机器人状态中提取关节位置、速度、力矩和末端位姿。
     def _get_robot_state(self):
-        
+
         state = self.robot.state
 
         # 获取关节位置与速度
-        q = np.array(getattr(state, 'q', []))
-        dq = np.array(getattr(state, 'dq', []))
+        try:
+            q_raw = getattr(state, 'q', [])
+            q = np.array(q_raw, dtype=np.float64)
+        except Exception as e:
+            self.logger.warning(f"Failed to get q: {e}, type: {type(q_raw)}")
+            q = np.zeros(7)
 
-        if len(q) == 0:
-            js = self.robot.current_joint_state
-            q = np.array(js.position)
-            dq = np.array(js.velocity)
+        try:
+            dq_raw = getattr(state, 'dq', [])
+            dq = np.array(dq_raw, dtype=np.float64)
+        except Exception as e:
+            self.logger.warning(f"Failed to get dq: {e}, type: {type(dq_raw)}")
+            dq = np.zeros(7)
+
+        if len(q) == 0 or len(dq) == 0:
+            try:
+                js = self.robot.current_joint_state
+                q = np.array(js.position, dtype=np.float64)
+                dq = np.array(js.velocity, dtype=np.float64)
+            except Exception as e:
+                self.logger.warning(f"Failed to get joint state: {e}")
+                q = np.zeros(7)
+                dq = np.zeros(7)
 
         # 获取外部力矩（优先使用滤波后的值，若不存在则回退到测量值）
-        if hasattr(state, 'tau_ext_hat_filtered'):
-            tau = np.array(state.tau_ext_hat_filtered)
-        elif hasattr(state, 'tau_J'):
-            tau = np.array(state.tau_J)
-        else:
-            tau = np.zeros(7)
+        try:
+            if hasattr(state, 'tau_ext_hat_filtered'):
+                tau_raw = state.tau_ext_hat_filtered
+                tau = np.array(tau_raw, dtype=np.float64)
+            elif hasattr(state, 'tau_J'):
+                tau_raw = state.tau_J
+                tau = np.array(tau_raw, dtype=np.float64)
+            else:
+                tau = np.zeros(7, dtype=np.float64)
+        except Exception as e:
+            self.logger.warning(f"Failed to get tau: {e}")
+            tau = np.zeros(7, dtype=np.float64)
 
         # 末端位姿：O_T_EE 为 4x4 齐次矩阵（列主序），长度 16
         if hasattr(state, 'O_T_EE'):
-            pose_mat = np.array(state.O_T_EE, dtype=np.float64)
+            try:
+                # Franky 的 O_T_EE 可能是不同类型，尝试多种转换方式
+                pose_raw = state.O_T_EE
+                self.logger.debug(f"O_T_EE type: {type(pose_raw)}, shape: {getattr(pose_raw, 'shape', 'no shape')}")
+
+                if hasattr(pose_raw, 'as_matrix'):
+                    # 如果是 Affine 对象，使用 as_matrix() 方法
+                    pose_mat = np.array(pose_raw.as_matrix(), dtype=np.float64).flatten(order='F')
+                elif hasattr(pose_raw, 'matrix'):
+                    # 备用方法：matrix 可能是属性或方法
+                    try:
+                        # 检查 matrix 是属性还是方法
+                        matrix_attr = getattr(pose_raw, 'matrix')
+                        if callable(matrix_attr):
+                            # 如果是方法，调用它
+                            matrix_data = matrix_attr()
+                        else:
+                            # 如果是属性，直接使用
+                            matrix_data = matrix_attr
+
+                        # 处理获取到的矩阵数据
+                        if hasattr(matrix_data, '__array__') or isinstance(matrix_data, np.ndarray):
+                            # 直接转换为数组
+                            pose_mat = np.array(matrix_data, dtype=np.float64).flatten(order='F')
+                        elif hasattr(matrix_data, 'as_matrix'):
+                            pose_mat = np.array(matrix_data.as_matrix(), dtype=np.float64).flatten(order='F')
+                        else:
+                            # 尝试直接构造 4x4 单位矩阵
+                            self.logger.warning(f"Unknown matrix type: {type(matrix_data)}, using identity")
+                            pose_mat = np.eye(4, dtype=np.float64).flatten(order='F')
+                    except Exception as matrix_e:
+                        self.logger.warning(f"Failed to get matrix from matrix attribute/method: {matrix_e}")
+                        pose_mat = np.zeros(16, dtype=np.float64)
+                elif isinstance(pose_raw, np.ndarray):
+                    # 如果已经是 numpy 数组
+                    if pose_raw.size == 16:
+                        pose_mat = pose_raw.astype(np.float64).flatten(order='F')
+                    elif pose_raw.size == 4:
+                        # 可能是 2x2 数组，需要扩展为 4x4
+                        pose_4x4 = np.eye(4, dtype=np.float64)
+                        pose_4x4[:2, :2] = pose_raw
+                        pose_mat = pose_4x4.flatten(order='F')
+                    else:
+                        pose_mat = pose_raw.astype(np.float64).flatten()[:16]  # 取前16个元素
+                else:
+                    # 其他情况，尝试转换为数组
+                    arr = np.array(pose_raw, dtype=np.float64)
+                    pose_mat = arr.flatten(order='F')[:16]  # 确保是16个元素
+            except Exception as e:
+                self.logger.warning(f"Failed to convert pose: {e}, type: {type(state.O_T_EE)}")
+                pose_mat = np.zeros(16, dtype=np.float64)
         else:
             pose_mat = np.zeros(16, dtype=np.float64)
 
@@ -145,6 +220,10 @@ class FrankaFactrBridge:
             try:
                 start_time = time.time()
                 q, dq, tau, pose_mat = self._get_robot_state()
+
+                # 调试信息
+                self.logger.debug(f"Publishing state: q={q.shape}, dq={dq.shape}, tau={tau.shape}")
+
                 # 发布状态：14 个 float（7 个位置 + 7 个速度）
                 state_msg = np.concatenate([q, dq]).astype(np.float32)
                 self.state_publisher.send(state_msg.tobytes(), zmq.NOBLOCK)
