@@ -91,3 +91,12 @@ ros2 launch factr_teleop/launch/rollout.py
 - 一键启动的稳定性，有时候退出后会存在factr乱动的情况
 - （已解决）程序关闭后主动关闭终端（或改成后台运行），结束后kill
 - 夹爪速度过慢 无力反馈
+
+
+## 问题
+
+```bash
+[factr_teleop_franka-1] [INFO] [1765271803.236010711] [factr_teleop_franka_right]: Has not received Franka right's external joint torques
+[factr_teleop_franka-1] [INFO] [1765271803.337104231] [factr_teleop_franka_right]: Has not received Franka right's external joint torques
+[factr_teleop_franka-1] [INFO] [1765271803.438063783] [factr_teleop_franka_right]: Has not received Franka right's external joint torques
+```

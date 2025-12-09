@@ -28,6 +28,7 @@ setup(
             'factr_teleop_grav_comp_demo = factr_teleop.factr_teleop_grav_comp_demo:main',
             'gripper_bridge_node = factr_teleop.gripper_bridge_node:main',
             'franka_bridge_node = factr_teleop.franka_bridge_node:main',
+            'zmq_ros_bridge = factr_teleop.zmq_ros_bridge:main',
         ],
     },
 )

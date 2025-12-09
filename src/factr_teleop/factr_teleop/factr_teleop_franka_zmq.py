@@ -84,10 +84,6 @@ class FACTRTeleopFrankaZMQ(FACTRTeleop):
         if self.enable_torque_feedback:
             # 用于获取 Franka 跟随臂外部关节力矩的 ZMQ 订阅器
             self.franka_torque_sub = ZMQSubscriber(zmq_addresses["joint_torque_sub"])
-            # 在首次收到力矩数据之前，循环等待（可视为初始化依赖）
-            while self.franka_torque_sub.message is None:
-                self.get_logger().info(f"Has not received Franka {self.name}'s external joint torques")
-                time.sleep(0.1)
             # 将 Franka 的外部关节力矩转发到 ROS 的发布器
             self.obs_franka_torque_pub = self.create_publisher(JointState, f'/franka/{self.name}/obs_franka_torque', 10)
         

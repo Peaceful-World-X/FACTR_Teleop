@@ -27,6 +27,8 @@ ROBOT_IP = "10.0.10.2"
 CMD_SUB_ADDRESS = "tcp://127.0.0.1:2098"
 STATE_PUB_ADDRESS = "tcp://127.0.0.1:3099"
 TORQUE_PUB_ADDRESS = "tcp://127.0.0.1:3087"
+# 末端位姿发布（列主序 4x4 齐次矩阵，单位：米）
+POSE_PUB_ADDRESS = "tcp://127.0.0.1:3098"
 
 INITIAL_POSITION = np.array([
     0.00461679, 0.00581697, -0.00479847, -1.56943803,
@@ -72,6 +74,7 @@ class FrankaFactrBridge:
         self.cmd_subscriber = None
         self.state_publisher = None
         self.torque_publisher = None
+        self.pose_publisher = None
         self.is_shutting_down = False  # 标记是否正在关闭
 
         # 注册退出时的清理函数
@@ -95,12 +98,18 @@ class FrankaFactrBridge:
         self.torque_publisher = self.zmq_context.socket(zmq.PUB)
         self.torque_publisher.bind(TORQUE_PUB_ADDRESS)
 
+        # 末端位姿发布器：发布 4x4 齐次变换矩阵（16 个 float64，列主序，单位米）
+        self.pose_publisher = self.zmq_context.socket(zmq.PUB)
+        self.pose_publisher.bind(POSE_PUB_ADDRESS)
+
         logger.info(f"ZMQ initialized: CMD={CMD_SUB_ADDRESS}, "
-                   f"State={STATE_PUB_ADDRESS}, Torque={TORQUE_PUB_ADDRESS}")
+                   f"State={STATE_PUB_ADDRESS}, Torque={TORQUE_PUB_ADDRESS}, "
+                   f"Pose={POSE_PUB_ADDRESS}")
         time.sleep(ZMQ_CONNECTION_WAIT_TIME)  # Wait for subscribers to connect
 
+    # 从机器人状态中提取关节位置、速度、力矩和末端位姿。
     def _get_robot_state(self):
-        """从机器人状态中提取关节位置、速度和力矩。"""
+        
         state = self.robot.state
 
         # 获取关节位置与速度
@@ -120,7 +129,13 @@ class FrankaFactrBridge:
         else:
             tau = np.zeros(7)
 
-        return q, dq, tau
+        # 末端位姿：O_T_EE 为 4x4 齐次矩阵（列主序），长度 16
+        if hasattr(state, 'O_T_EE'):
+            pose_mat = np.array(state.O_T_EE, dtype=np.float64)
+        else:
+            pose_mat = np.zeros(16, dtype=np.float64)
+
+        return q, dq, tau, pose_mat
     
     #后台线程：以固定频率发布机器人状态。
     def state_publisher_loop(self):
@@ -129,13 +144,20 @@ class FrankaFactrBridge:
         while self.running and self.robot:
             try:
                 start_time = time.time()
-                q, dq, tau = self._get_robot_state()
+                q, dq, tau, pose_mat = self._get_robot_state()
                 # 发布状态：14 个 float（7 个位置 + 7 个速度）
                 state_msg = np.concatenate([q, dq]).astype(np.float32)
                 self.state_publisher.send(state_msg.tobytes(), zmq.NOBLOCK)
                 # 发布力矩：7 个 float
                 torque_msg = tau.astype(np.float32)
                 self.torque_publisher.send(torque_msg.tobytes(), zmq.NOBLOCK)
+                # 发布末端位姿：16 个 float64（列主序 4x4）
+                if hasattr(self, 'pose_publisher') and pose_mat is not None:
+                    try:
+                        pose_bytes = pose_mat.astype(np.float64).tobytes()
+                        self.pose_publisher.send(pose_bytes, zmq.NOBLOCK)
+                    except Exception as pose_e:
+                        logger.debug(f"Pose publisher error: {pose_e}")
 
                 # Frequency control
                 elapsed = time.time() - start_time

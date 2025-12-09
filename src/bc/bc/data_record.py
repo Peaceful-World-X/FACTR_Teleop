@@ -2,7 +2,7 @@
 # FACTR: Force-Attending Curriculum Training for Contact-Rich Policy Learning
 # https://arxiv.org/abs/2502.17432
 # Copyright (c) 2025 Jason Jingzhou Liu and Yulong Li
-
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -18,126 +18,277 @@
 
 import rclpy
 from rclpy.node import Node
-from pynput import keyboard
-
-import pickle
+from sensor_msgs.msg import JointState, Image
+from cv_bridge import CvBridge
+import cv2
+import numpy as np
+import threading
 from pathlib import Path
+import pickle
+import shutil
+import time
+from pynput import keyboard
 from termcolor import colored
 
 from bc import utils
-from sensor_msgs.msg import JointState, Image
 from python_utils.utils import get_workspace_root
+
+
+class ObsBuffer:
+    """Thread-safe buffer for storing the latest message."""
+    def __init__(self):
+        self.msg = None
+        self.lock = threading.Lock()
+
+    def update(self, msg):
+        with self.lock:
+            self.msg = msg
+
+    def get(self):
+        with self.lock:
+            return self.msg
 
 
 class DataRecord(Node):
     def __init__(self, name="data_record_node"):
         super().__init__(name)
 
-        self.declare_parameter('state_topics', [""])
-        self.state_topics = self.get_parameter('state_topics').value
-        
-        self.declare_parameter('image_topics', [""])
-        self.image_topics = self.get_parameter('image_topics').value
-        
+        # 参数声明
         self.declare_parameter('dataset_name', "")
-        dataset_name = self.get_parameter('dataset_name').value
-        self.output_dir = Path(f"{get_workspace_root()}/raw_data/{dataset_name}")
+        self.dataset_name = self.get_parameter('dataset_name').value
         
+        # 相机话题列表：第一个被视为主触发源
+        # 例如：['/realsense/front/im', '/realsense/side/im']
+        self.declare_parameter('camera_topics', [])
+        self.camera_topics = self.get_parameter('camera_topics').value
+        
+        # 状态话题列表：包含 Franka, FACTR, Gripper 等的所有 JointState 话题
+        self.declare_parameter('state_topics', [])
+        self.state_topics = self.get_parameter('state_topics').value
+
+        # 输出目录
+        self.output_dir = Path(f"{get_workspace_root()}/raw_data/{self.dataset_name}")
         if not self.output_dir.exists():
             self.output_dir.mkdir(parents=True, exist_ok=True)
         self.get_logger().info(f"Saving to {self.output_dir}")
-        
-        self.recording = False 
 
-        listener = keyboard.Listener(on_press=self.on_press_key)
-        listener.start()
+        # 内部状态
+        self.recording = False
+        self.current_ep_index = None
+        self.current_episode_dir: Path | None = None
+        self.current_episode_data = []
+        self.current_frame_id = 0
         
-        self.topics_to_record = []
-        for state_topic in self.state_topics:
-            callback = self.create_callback(state_topic)
-            self.create_subscription(JointState, state_topic, callback, 10)
-            self.topics_to_record.append(state_topic)
-        for image_topic in self.image_topics:
-            callback = self.create_callback(image_topic)
-            self.create_subscription(Image, image_topic, callback, 1)
-            self.topics_to_record.append(image_topic)
+        self.bridge = CvBridge()
         
-        self.get_logger().info(colored(f"{self.topics_to_record}", 'green'))
-    
-    def get_timestamp(self):
-        current_time = self.get_clock().now().to_msg()
-        time_ns = utils.ros2_time_to_ns(current_time)
-        return time_ns
-    
-    def create_callback(self, topic_name):
-        def callback(msg):
-            if not self.recording:
-                return
-            time_ns = self.get_timestamp()
-            data = utils.process_msg(msg)
-            self.data_log["data"][topic_name].append(data)
-            self.data_log["timestamps"][topic_name].append(time_ns)
-            self.data_log["all_timestamps"].append(time_ns)
-        return callback
+        # 状态缓存：{topic_name: ObsBuffer}
+        self.state_buffers = {topic: ObsBuffer() for topic in self.state_topics}
+        # 辅助相机缓存：{topic_name: ObsBuffer} (主相机不需要缓存，直接在回调中处理)
+        self.camera_buffers = {}
+        if len(self.camera_topics) > 1:
+            for cam_topic in self.camera_topics[1:]:
+                self.camera_buffers[cam_topic] = ObsBuffer()
 
-    def save_data(self, ep_index):
-        if not self.output_dir.exists():
-            self.output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = self.output_dir / f"ep_{ep_index:05d}.pkl"
-        with open(output_path, 'wb') as f:
-            pickle.dump(self.data_log, f, protocol=pickle.HIGHEST_PROTOCOL)
-        duration = (self.data_log['all_timestamps'][-1] - self.data_log['all_timestamps'][0]) / 1e9
-        total_messages = len(self.data_log['all_timestamps'])
-        self.get_logger().info(colored(f"Data saved to {output_path}, traj duration={duration:.2f}s, total messages={total_messages}", 'light_blue'))
+        # 订阅状态话题
+        for topic in self.state_topics:
+            self.create_subscription(
+                JointState, 
+                topic, 
+                lambda msg, t=topic: self.state_buffers[t].update(msg), 
+                10
+            )
+            
+        # 订阅辅助相机话题
+        for topic in self.camera_buffers:
+            self.create_subscription(
+                Image, 
+                topic, 
+                lambda msg, t=topic: self.camera_buffers[t].update(msg), 
+                1
+            )
 
-    def delete_last_trajectory(self):
-        if not self.output_dir.exists():
-            self.get_logger().info(colored(f"{self.output_dir} does not exist", 'light_blue'))
+        # 订阅主相机话题（触发源）
+        if self.camera_topics:
+            self.main_camera_topic = self.camera_topics[0]
+            self.create_subscription(
+                Image, 
+                self.main_camera_topic, 
+                self.main_camera_callback, 
+                1
+            )
+            self.get_logger().info(f"主触发相机: {self.main_camera_topic}")
+        else:
+            self.get_logger().warn("未配置相机话题，无法触发录制！")
+
+        # 键盘控制
+        self.listener = keyboard.Listener(on_press=self.on_press_key)
+        self.listener.start()
+
+        self.get_logger().info(colored(f"Ready to record. Press SPACE to start/stop.", 'green'))
+
+    def main_camera_callback(self, msg: Image):
+        """主相机回调：触发一帧数据的录制"""
+        if not self.recording:
             return
-        all_episodes = [f for f in self.output_dir.iterdir() if f.name.startswith('ep_') and f.name.endswith('.pkl')]
-        sorted_episodes = sorted(all_episodes, key=lambda x: int(x.name.split('_')[1].split('.')[0]))
-        if len(sorted_episodes) == 0:
-            self.get_logger().info(colored(f"No trajectories to delete", 'light_blue'))
+
+        # 1. 立即获取所有状态快照 (Latest Observation)
+        snapshot = {}
+        # 状态数据
+        for topic, buf in self.state_buffers.items():
+            snapshot[topic] = buf.get()
+        # 辅助相机图像
+        other_cam_imgs = {}
+        for topic, buf in self.camera_buffers.items():
+            other_cam_imgs[topic] = buf.get()
+
+        # 2. 处理并保存主相机图像
+        try:
+            main_cv_img = self.bridge.imgmsg_to_cv2(msg, "bgr8")
+        except Exception as e:
+            self.get_logger().warn(f"主相机图像转换失败: {e}")
             return
-        output_path = sorted_episodes[-1]
-        output_path.unlink()
-        self.get_logger().info(colored(f"Deleted trajectory {output_path}", 'light_blue'))
+
+        frame_id = self.current_frame_id
+        
+        # 确保图片目录存在
+        # 结构：ep_000/camera_name/0000.bmp
+        main_cam_name = self.topic_to_name(self.main_camera_topic)
+        main_cam_dir = self.current_episode_dir / main_cam_name
+        main_cam_dir.mkdir(parents=True, exist_ok=True)
+        
+        main_img_path = main_cam_dir / f"{frame_id:04d}.bmp"
+        cv2.imwrite(str(main_img_path), main_cv_img)
+
+        # 3. 处理并保存辅助相机图像
+        saved_img_paths = {main_cam_name: str(main_img_path.relative_to(self.output_dir))}
+        
+        for topic, img_msg in other_cam_imgs.items():
+            if img_msg is None:
+                continue
+            try:
+                cv_img = self.bridge.imgmsg_to_cv2(img_msg, "bgr8")
+                cam_name = self.topic_to_name(topic)
+                cam_dir = self.current_episode_dir / cam_name
+                cam_dir.mkdir(parents=True, exist_ok=True)
+                
+                img_path = cam_dir / f"{frame_id:04d}.bmp"
+                cv2.imwrite(str(img_path), cv_img)
+                saved_img_paths[cam_name] = str(img_path.relative_to(self.output_dir))
+            except Exception:
+                pass
+
+        # 4. 解析并组装状态数据
+        frame_data = {
+            "frame_id": frame_id,
+            "images": saved_img_paths,
+        }
+        
+        # 解析 Franka / FACTR / Gripper 数据
+        # 注意：这里需要根据实际话题名进行硬编码解析，或者通用解析
+        # 假设话题名如下（需根据您的 launch 文件确认）：
+        # Franka State: /franka/joint_states
+        # Gripper: /bridge/obs_gripper_state
+        # FACTR: /factr/joint_states (假设)
+        
+        for topic, state_msg in snapshot.items():
+            if state_msg is None:
+                continue
+            
+            # 通用解析：直接存 position/velocity/effort
+            # 若需要特定字段重命名，可在此处添加逻辑
+            # 例如：
+            # if "franka" in topic: ...
+            
+            # 这里为了通用性，直接存 topic -> dict
+            # 您后续处理脚本可以再提取 franka_q 等
+            # 或者在此处直接展平：
+            
+            # 示例：针对 specific topics 的解析
+            processed_msg = utils.process_msg(state_msg) # 假设 utils.process_msg 返回字典或对象
+            
+            # 如果是 JointState，通常 process_msg 会返回 {name, position, ...}
+            # 我们将其存入 frame_data，键名为 topic
+            frame_data[topic] = processed_msg
+
+            # 特殊处理：如果是夹爪状态，提取开度
+            if "/bridge/obs_gripper_state" in topic:
+                # position[0] = leader_ratio, position[1] = follower_ratio
+                if hasattr(state_msg, 'position') and len(state_msg.position) >= 2:
+                    frame_data["leader_gripper"] = state_msg.position[0]
+                    frame_data["franka_gripper"] = state_msg.position[1]
+
+        self.current_episode_data.append(frame_data)
+        self.current_frame_id += 1
+
+    def topic_to_name(self, topic):
+        """将话题名转换为目录名（去除斜杠）"""
+        return topic.strip('/').replace('/', '_')
+
+    def start_recording(self):
+        # 确定新的 episode index
+        all_episodes = [d for d in self.output_dir.iterdir() if d.is_dir() and d.name.startswith('ep_')]
+        self.current_ep_index = len(all_episodes)
+        
+        episode_name = f"ep_{self.current_ep_index:05d}"
+        self.current_episode_dir = self.output_dir / episode_name
+        self.current_episode_dir.mkdir(parents=True, exist_ok=True)
+        
+        self.current_episode_data = []
+        self.current_frame_id = 0
+        self.recording = True
+        self.get_logger().info(f"Started recording: {episode_name}")
+
+    def stop_recording(self):
+        self.recording = False
+        if not self.current_episode_data:
+            self.get_logger().warn("No data recorded!")
+            # 清理空目录
+            if self.current_episode_dir and self.current_episode_dir.exists():
+                shutil.rmtree(self.current_episode_dir)
+            return
+
+        # 保存 PKL
+        pkl_path = self.current_episode_dir / "data.pkl"
+        with open(pkl_path, 'wb') as f:
+            pickle.dump(self.current_episode_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+            
+        self.get_logger().info(f"Saved {len(self.current_episode_data)} frames to {pkl_path}")
+        self.current_episode_dir = None
+        self.current_episode_data = []
+
+    def delete_last_episode(self):
+        all_episodes = sorted([d for d in self.output_dir.iterdir() if d.is_dir() and d.name.startswith('ep_')])
+        if not all_episodes:
+            self.get_logger().info("No episodes to delete.")
+            return
+            
+        last_ep = all_episodes[-1]
+        shutil.rmtree(last_ep)
+        self.get_logger().info(colored(f"Deleted {last_ep.name}", 'red'))
 
     def on_press_key(self, key):
-        """Callback function for key press events."""
         try:
-            if key == keyboard.Key.delete:
-                self.delete_last_trajectory()
-                return
-            elif key == keyboard.Key.space:
+            if key == keyboard.Key.space:
                 if not self.recording:
-                    self.get_logger().info(f"Starting data recording")
-                    # initialize data log
-                    self.data_log = {
-                        "data": {},
-                        "timestamps": {},
-                        "all_timestamps": [],
-                    }
-                    for topic in self.topics_to_record:
-                        self.data_log["data"][topic] = []
-                        self.data_log["timestamps"][topic] = []
-                    self.recording = True
+                    self.start_recording()
                 else:
-                    self.get_logger().info(f"Stopping data recording")
-                    self.recording = False
-                    
-                    all_episodes = [f for f in self.output_dir.iterdir() if f.name.startswith('ep_') and f.name.endswith('.pkl')]
-                    ep_index = len(all_episodes)
-                    self.save_data(ep_index)
-            else:
-                self.get_logger().info("Press space to start/stop recording; press delete to delete last trajectory")
-
+                    self.stop_recording()
+            elif key == keyboard.Key.delete:
+                if not self.recording:
+                    self.delete_last_episode()
         except AttributeError:
             pass
 
 def main(args=None):
     rclpy.init(args=args)
-    data_record_node = DataRecord()
-    rclpy.spin(data_record_node)
-    data_record_node.destroy_node()
-    rclpy.shutdown()
+    node = DataRecord()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()

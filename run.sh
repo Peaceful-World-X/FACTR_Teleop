@@ -9,6 +9,7 @@ echo ""
 # 全局变量存储进程ID
 FRANKY_PID=""
 ROS_PID=""
+STOP_STAGE=0
 
 
 cleanup() {
@@ -40,6 +41,15 @@ cleanup() {
 # 设置信号处理
 trap cleanup SIGINT SIGTERM
 
+# 清理可能的残留进程和端口
+echo "🧹 清理可能的残留进程..."
+pkill -f "franka_factr_bridge_franky.py" 2>/dev/null || true
+pkill -f "ros2.*launch.*collect_data" 2>/dev/null || true
+pkill -f "ros2.*launch.*teleop_system" 2>/dev/null || true
+
+# 等待端口释放
+sleep 2
+
 # Franky Bridge (后台运行)
 echo "🔧 启动 Franky Bridge..."
 (
@@ -59,10 +69,11 @@ sleep 2
 
 # ROS2 Launch (后台运行)
 echo "🤖 启动 ROS2 系统..."
-    enable: True  # 是否启用力矩反馈（True=启用，False=禁用）
-    gain: 1.5  # 力矩反馈增益系数
-    damping: 0.0  # 力矩反馈阻尼系数
 (
+    # 遥操作参数配置（如果需要可以取消注释）
+    # enable: True  # 是否启用力矩反馈（True=启用，False=禁用）
+    # gain: 1.5  # 力矩反馈增益系数
+    # damping: 0.0  # 力矩反馈阻尼系数
     echo "[ROS2] 配置环境..."
     # cd /home/cytoderm/projects/FACTR_Teleop
     source .venv/bin/activate
