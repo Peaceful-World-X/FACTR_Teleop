@@ -52,7 +52,7 @@ chmod +x run.sh
 ```bash
 colcon build --packages-select factr_teleop
 ```
-
+7分 40秒
 ## 相关节点和程序
 ### 主要程序
 - **基于franky库的franka FCI和主机ZMQ的桥接程序** [franka_factr_bridge_franky.py](franka_factr_bridge_franky.py)
@@ -66,6 +66,12 @@ colcon build --packages-select factr_teleop
 
 - **ros2同时启用夹爪和factr的launch**[teleop_system.launch.py](src/factr_teleop/launch/teleop_system.launch.py)
 
+- **遥操收集数据的launch**[collect_data.launch.py](src/factr_teleop/launch/collect_data.launch.py)
+    1. factr_teleop_franka_right：右臂遥操节点
+    2. gripper_node：夹爪处理节点
+    3. data_record_node:数据记录节点，用于记录摄像头和机械臂的数据
+    4. realsense_front_node（realsense_back_node）：摄像头节点
+    5. zmq_ros_bridge_node：ZMQ服务数据转换为ROS2节点数据并发布的节点
 
 ### 相关配置
 - **遥操程序IP地址配置**[global_configs.py ](src/python_utils/python_utils/global_configs.py)
@@ -95,8 +101,3 @@ ros2 launch factr_teleop/launch/rollout.py
 
 ## 问题
 
-```bash
-[factr_teleop_franka-1] [INFO] [1765271803.236010711] [factr_teleop_franka_right]: Has not received Franka right's external joint torques
-[factr_teleop_franka-1] [INFO] [1765271803.337104231] [factr_teleop_franka_right]: Has not received Franka right's external joint torques
-[factr_teleop_franka-1] [INFO] [1765271803.438063783] [factr_teleop_franka_right]: Has not received Franka right's external joint torques
-```

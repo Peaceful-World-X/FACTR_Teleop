@@ -39,7 +39,8 @@ RELATIVE_DYNAMICS_FACTOR = 0.1
 STATE_PUB_FREQUENCY = 100.0  # Hz
 ZMQ_CONNECTION_WAIT_TIME = 2.0  # seconds
 CMD_RATE_LIMIT = 0.02  # 最小命令间隔 (50Hz)，防止过快命令导致的安全错误
-POSITION_FILTER_ALPHA = 0.5  # 位置滤波系数，0.3表示较平滑，1.0表示无滤波
+POSITION_FILTER_ALPHA = 0.3  # 位置滤波系数，0.2表示更强的平滑滤波，1.0表示无滤波
+MAX_POSITION_DELTA = 0.1     # 最大位置变化限制（弧度），防止剧烈运动
 
 # Franka Panda 关节限制 (弧度)
 JOINT_LIMITS = np.array([
@@ -109,6 +110,34 @@ class FrankaFactrBridge:
                    f"State={STATE_PUB_ADDRESS}, Torque={TORQUE_PUB_ADDRESS}, "
                    f"Pose={POSE_PUB_ADDRESS}")
         time.sleep(ZMQ_CONNECTION_WAIT_TIME)  # Wait for subscribers to connect
+
+    def handle_reflex_recovery(self):
+        """专门处理Reflex状态恢复"""
+        try:
+            logger.warning("检测到Reflex状态，尝试恢复...")
+            # 尝试多种恢复方法
+            if hasattr(self.robot, 'automatic_error_recovery'):
+                self.robot.automatic_error_recovery()
+                logger.info("尝试自动错误恢复")
+            elif hasattr(self.robot, 'recover_from_errors'):
+                self.robot.recover_from_errors()
+                logger.info("尝试从错误中恢复")
+
+            # 等待恢复完成
+            time.sleep(2.0)
+
+            # 验证恢复状态
+            try:
+                state = self.robot.state
+                logger.info("Reflex恢复完成，可以继续控制")
+                return True
+            except Exception as e:
+                logger.error(f"恢复后状态检查失败: {e}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Reflex恢复失败: {e}")
+            return False
 
     # 从机器人状态中提取关节位置、速度、力矩和末端位姿。
     def _get_robot_state(self):
@@ -272,6 +301,13 @@ class FrankaFactrBridge:
                                 # 指数移动平均滤波
                                 filtered_target = POSITION_FILTER_ALPHA * target + (1 - POSITION_FILTER_ALPHA) * last_filtered_position
 
+                            # 检查位置变化是否过大
+                            if last_filtered_position is not None:
+                                position_delta = np.abs(filtered_target - last_filtered_position)
+                                if np.any(position_delta > MAX_POSITION_DELTA):
+                                    logger.warning(f"位置变化过大，已跳过: max_delta={np.max(position_delta):.3f}")
+                                    continue
+
                             last_filtered_position = filtered_target.copy()
 
                             try:
@@ -293,28 +329,23 @@ class FrankaFactrBridge:
                     break
 
             except Exception as e:
-                logger.error(f"Motion error: {e}")
-                # Attempt error recovery
-                try:
-                    if hasattr(self.robot, 'automatic_error_recovery'):
-                        self.robot.automatic_error_recovery()
-                    elif hasattr(self.robot, 'recover_from_errors'):
-                        self.robot.recover_from_errors()
-                except Exception as rec_e:
-                    logger.warning(f"Recovery failed: {rec_e}")
-                time.sleep(0.5)
+                error_msg = str(e)
+                logger.error(f"Motion error: {error_msg}")
 
-            except Exception as e:
-                logger.error(f"Motion error: {e}")
-                motion_in_progress = False  # 重置运动状态
-                # Attempt error recovery
-                try:
-                    if hasattr(self.robot, 'automatic_error_recovery'):
-                        self.robot.automatic_error_recovery()
-                    elif hasattr(self.robot, 'recover_from_errors'):
-                        self.robot.recover_from_errors()
-                except Exception as rec_e:
-                    logger.warning(f"Recovery failed: {rec_e}")
+                # 检查是否为Reflex相关错误
+                if "Reflex" in error_msg or "motion aborted by reflex" in error_msg:
+                    logger.warning("检测到Reflex状态，尝试恢复...")
+                    if not self.handle_reflex_recovery():
+                        logger.error("Reflex恢复失败，请手动重启机器人")
+                        time.sleep(5.0)  # 等待更长时间
+                else:
+                    # 其他错误的标准恢复
+                    try:
+                        if hasattr(self.robot, 'automatic_error_recovery'):
+                            self.robot.automatic_error_recovery()
+                    except Exception as rec_e:
+                        logger.warning(f"标准恢复失败: {rec_e}")
+
                 time.sleep(0.5)
 
 

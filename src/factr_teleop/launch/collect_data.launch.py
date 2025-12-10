@@ -36,6 +36,7 @@ def generate_launch_description():
             {
                 "camera_topics": [
                     "/realsense/front/im", # 前摄像头
+                    "/realsense/back/im",  # 后摄像头
                 ]
             },
             {"dataset_name": "test"}
@@ -77,7 +78,7 @@ def generate_launch_description():
     )
     
     #3. RealSense 摄像头节点
-    realsense_node = Node(
+    realsense_front_node = Node(
         package='cameras',
         executable='realsense',
         name='front',
@@ -89,19 +90,18 @@ def generate_launch_description():
         ]
     )
 
-    '''
-    realsense_node = Node(
+    realsense_back_node = Node(
         package='cameras',
         executable='realsense',
-        name='front',
+        name='back',
         output='screen',
         emulate_tty=True,
         parameters=[
             {"serial": "419122270824"},
-            {"name": "front"},
+            {"name": "back"},
         ]
     )    
-    '''
+    
 
     
     # 4. ZMQ -> ROS 桥接节点（将 Franka ZMQ 数据转为 ROS 话题）
@@ -117,6 +117,7 @@ def generate_launch_description():
         factr_teleop_franka_right,
         gripper_node,
         data_record_node,
-        realsense_node,
+        realsense_front_node,
+        realsense_back_node,
         zmq_ros_bridge_node,
     ])
