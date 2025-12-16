@@ -603,6 +603,7 @@ class GripperBridgeNode(Node):
         self.declare_parameter('leader_gripper_min_rad', 0.0)  # Leader 夹爪最小位置（弧度）
         self.declare_parameter('leader_gripper_max_rad', 0.8)  # Leader 夹爪最大位置（弧度）
         self.declare_parameter('skip_init', False)  # 诊断用：跳过初始化
+        self.declare_parameter('robot_name', 'right') # 机器人名称 (left/right)
 
         port = self.get_parameter('port').value
         baudrate = self.get_parameter('baudrate').value
@@ -613,9 +614,11 @@ class GripperBridgeNode(Node):
         self.leader_gripper_min_rad = self.get_parameter('leader_gripper_min_rad').value
         self.leader_gripper_max_rad = self.get_parameter('leader_gripper_max_rad').value
         self.skip_init = self.get_parameter('skip_init').value
+        self.robot_name = self.get_parameter('robot_name').value
 
         self.get_logger().info(f"初始化夹爪桥接节点，端口: {port} (ID: {slave_id}, 波特率: {baudrate})...")
         self.get_logger().info(f"控制模式: {self.control_mode}")
+        self.get_logger().info(f"机器人名称: {self.robot_name}")
         if self.control_mode == CONTROL_MODE_ABSOLUTE:
             self.get_logger().info(f"  Leader 夹爪范围: [{self.leader_gripper_min_rad:.3f}, {self.leader_gripper_max_rad:.3f}] 弧度")
             self.get_logger().info(f"  Follower 夹爪范围: [{WIDTH_MIN:.3f}, {WIDTH_MAX:.3f}] 米")
@@ -645,13 +648,14 @@ class GripperBridgeNode(Node):
                 self.is_activated = False
 
         # ROS 订阅者
+        cmd_topic = f'/factr_teleop/{self.robot_name}/cmd_gripper_pos'
         self.sub_cmd = self.create_subscription(
             JointState,
-            '/factr_teleop/right/cmd_gripper_pos',
+            cmd_topic,
             self.cmd_callback,
             1
         )
-        self.get_logger().info("已订阅 /factr_teleop/right/cmd_gripper_pos")
+        self.get_logger().info(f"已订阅 {cmd_topic}")
 
         # ROS 发布者
         self.pub_state = self.create_publisher(

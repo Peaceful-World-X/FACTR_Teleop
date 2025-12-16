@@ -85,7 +85,7 @@ class FACTRTeleopFrankaZMQ(FACTRTeleop):
             # 用于获取 Franka 跟随臂外部关节力矩的 ZMQ 订阅器
             self.franka_torque_sub = ZMQSubscriber(zmq_addresses["joint_torque_sub"])
             # 将 Franka 的外部关节力矩转发到 ROS 的发布器
-            self.obs_franka_torque_pub = self.create_publisher(JointState, f'/franka/{self.name}/obs_franka_torque', 10)
+            # self.obs_franka_torque_pub = self.create_publisher(JointState, f'/franka/{self.name}/obs_franka_torque', 10)
         
         if self.enable_gripper_feedback:
             # 订阅夹爪力矩信息的 ROS 订阅器
@@ -116,7 +116,7 @@ class FACTRTeleopFrankaZMQ(FACTRTeleop):
         else:
             self.get_logger().debug(f"Received torque data: {external_torque.shape}")
         # 将 Franka 的外部关节力矩转发到 ROS
-        self.obs_franka_torque_pub.publish(create_array_msg(external_torque))
+        # self.obs_franka_torque_pub.publish(create_array_msg(external_torque))
         return external_torque
 
     def update_communication(self, leader_arm_pos, leader_gripper_pos):

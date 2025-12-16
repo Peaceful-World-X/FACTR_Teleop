@@ -29,10 +29,10 @@ def generate_launch_description():
         parameters=[
             {
                 "state_topics": [
-                    "/franka/joint_states",               # Franka 关节状态 (from ZMQ bridge)
+                    "/franka/joint_states",               # Franka 关节状态 (from ZMQ bridge) 位置/速度/力矩
                     "/factr_teleop/right/cmd_franka_pos", # 右臂关节位置命令
-                     #"/franka/right/obs_franka_torque",    # 右臂关节力矩观测
-                    "/franka/end_effector_pose"           # 末端位姿
+                    "/franka/end_effector_pose",          # 末端位姿
+                    "/bridge/obs_gripper_state"           # 夹爪状态
                 ]
             },
             {

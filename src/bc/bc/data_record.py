@@ -217,6 +217,14 @@ class DataRecord(Node):
             # if "franka" in topic: ...
 
             
+            # 特殊处理：如果是夹爪状态，提取开度
+            if "/bridge/obs_gripper_state" in topic:
+                # position[0] = leader_ratio, position[1] = follower_ratio
+                if hasattr(state_msg, 'position') and len(state_msg.position) >= 2:
+                    frame_data["leader_gripper"] = state_msg.position[0]
+                    frame_data["franka_gripper"] = state_msg.position[1]
+                continue
+
             # 针对 specific topics 的解析
             if isinstance(state_msg, JointState):
                 processed_msg = {}
@@ -231,13 +239,6 @@ class DataRecord(Node):
             
             # 存入 frame_data，键名为 topic
             frame_data[topic] = processed_msg
-
-            # 特殊处理：如果是夹爪状态，提取开度
-            if "/bridge/obs_gripper_state" in topic:
-                # position[0] = leader_ratio, position[1] = follower_ratio
-                if hasattr(state_msg, 'position') and len(state_msg.position) >= 2:
-                    frame_data["leader_gripper"] = state_msg.position[0]
-                    frame_data["franka_gripper"] = state_msg.position[1]
 
         self.current_episode_data.append(frame_data)
         self.current_frame_id += 1

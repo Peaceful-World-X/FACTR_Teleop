@@ -101,3 +101,44 @@ ros2 launch factr_teleop/launch/rollout.py
 
 ## 问题
 
+Topic 名称: /franka/joint_states
+消息类型: sensor_msgs.msg.JointState
+发布的信息:
+
+包含 Franka 机械臂的关节状态数据。
+position: 7 维关节位置 (q, 从 ZMQ 的 STATE_SUB_ADDRESS 接收，float32 数组的前 7 个元素)。
+velocity: 7 维关节速度 (dq, 从 ZMQ 的 STATE_SUB_ADDRESS 接收，float32 数组的后 7 个元素)。
+effort: 7 维关节力矩 (tau, 从 ZMQ 的 TORQUE_SUB_ADDRESS 接收，7 个 float32；如果未收到，则补零)。
+name: 关节名称列表 ["panda_joint1", "panda_joint2", ..., "panda_joint7"]。
+header.stamp: 当前 ROS 时间戳。
+发布频率：取决于 ZMQ 数据到达频率（约 100Hz），当 current_q 和 current_dq 都可用时发布。
+Topic 名称: /franka/end_effector_pose
+消息类型: std_msgs.msg.Float64MultiArray
+发布的信息:
+
+包含 Franka 末端执行器 (end-effector) 的位姿数据。
+data: 16 个 float64 元素，表示 4x4 齐次变换矩阵的展平（col-major 顺序，从 ZMQ 的 POSE_SUB_ADDRESS 接收）。
+发布频率：每当收到 ZMQ 位姿数据时发布（约 100Hz）。
+Topic 名称: /franka/right/obs_franka_torque
+消息类型: sensor_msgs.msg.JointState
+发布的信息:
+
+专门发布 Franka 的关节力矩数据（用于 ROS teleop 节点）。
+effort: 7 维关节力矩 (tau, 从 ZMQ 的 TORQUE_SUB_ADDRESS 接收，7 个 float32)。
+header.stamp: 与 /franka/joint_states 相同的 ROS 时间戳。
+其他字段（如 position/velocity）为空。
+发布频率：与 /franka/joint_states 同步，当力矩数据可用时发布。
+
+
+Topic 名称: /bridge/obs_gripper_state
+消息类型: sensor_msgs.msg.JointState
+发布的信息:
+包含 Leader 和 Follower 夹爪的当前状态数据。
+name: 关节名称列表 ['leader_gripper_ratio', 'follower_gripper_ratio']。
+position: 两个浮点数列表 [leader_ratio, follower_ratio]，表示归一化开度（0.0 = 完全闭合，1.0 = 完全张开）。
+leader_ratio: Leader 夹爪的归一化开度（基于内部状态 self.leader_ratio，从命令回调中更新）。
+follower_ratio: Follower 夹爪的归一化开度（基于物理夹爪读取的位置，线性映射到 0.0-1.0 范围）。
+header.stamp: 当前 ROS 时间戳（使用 self.get_clock().now().to_msg()）。
+发布频率：由 poll_rate 参数控制（默认 50Hz），在 control_loop 中定期发布。
+
+以上是从bridge中发布的话题情况，我需要把它们全部接收，包括franka的关节位置、关节速度、关节力矩、末端位姿；这些信息是需要从zmq_ros_bridge中接收的
