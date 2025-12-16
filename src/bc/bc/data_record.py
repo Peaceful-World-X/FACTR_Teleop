@@ -19,6 +19,7 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState, Image
+from std_msgs.msg import Float64MultiArray
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
@@ -91,8 +92,13 @@ class DataRecord(Node):
 
         # 订阅状态话题
         for topic in self.state_topics:
+            if "pose" in topic or "end_effector" in topic:
+                msg_type = Float64MultiArray
+            else:
+                msg_type = JointState
+
             self.create_subscription(
-                JointState, 
+                msg_type, 
                 topic, 
                 lambda msg, t=topic: self.state_buffers[t].update(msg), 
                 10
@@ -191,23 +197,39 @@ class DataRecord(Node):
         # FACTR: /factr/joint_states (假设)
         
         for topic, state_msg in snapshot.items():
+
             if state_msg is None:
                 continue
             
+            # 1. 处理位姿数据 (Float64MultiArray)
+            if isinstance(state_msg, Float64MultiArray):
+                data = np.array(state_msg.data, dtype=np.float64)
+                # 如果是 16 维数据，假定为 4x4 齐次矩阵（列主序）
+                if data.size == 16:
+                    frame_data[topic] = data.reshape((4, 4), order='F')
+                else:
+                    frame_data[topic] = data
+                continue
+
             # 通用解析：直接存 position/velocity/effort
             # 若需要特定字段重命名，可在此处添加逻辑
             # 例如：
             # if "franka" in topic: ...
+
             
-            # 这里为了通用性，直接存 topic -> dict
-            # 您后续处理脚本可以再提取 franka_q 等
-            # 或者在此处直接展平：
+            # 针对 specific topics 的解析
+            if isinstance(state_msg, JointState):
+                processed_msg = {}
+                if state_msg.position:
+                    processed_msg['position'] = np.array(state_msg.position, dtype=np.float64)
+                if state_msg.velocity:
+                    processed_msg['velocity'] = np.array(state_msg.velocity, dtype=np.float64)
+                if state_msg.effort:
+                    processed_msg['effort'] = np.array(state_msg.effort, dtype=np.float64)
+            else:
+                processed_msg = utils.process_msg(state_msg)
             
-            # 示例：针对 specific topics 的解析
-            processed_msg = utils.process_msg(state_msg) # 假设 utils.process_msg 返回字典或对象
-            
-            # 如果是 JointState，通常 process_msg 会返回 {name, position, ...}
-            # 我们将其存入 frame_data，键名为 topic
+            # 存入 frame_data，键名为 topic
             frame_data[topic] = processed_msg
 
             # 特殊处理：如果是夹爪状态，提取开度
@@ -216,11 +238,6 @@ class DataRecord(Node):
                 if hasattr(state_msg, 'position') and len(state_msg.position) >= 2:
                     frame_data["leader_gripper"] = state_msg.position[0]
                     frame_data["franka_gripper"] = state_msg.position[1]
-
-            # 特殊处理：如果是主臂命令，提取关节角度
-            if "/leader/joint_states" in topic:
-                if hasattr(state_msg, 'position') and state_msg.position:
-                    frame_data["leader_joint_pos"] = np.array(state_msg.position, dtype=np.float64)
 
         self.current_episode_data.append(frame_data)
         self.current_frame_id += 1

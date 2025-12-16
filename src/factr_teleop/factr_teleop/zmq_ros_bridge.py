@@ -47,13 +47,7 @@ class ZmqRosBridge(Node):
         self.pose_sub.setsockopt_string(zmq.SUBSCRIBE, "")
         self.pose_sub.setsockopt(zmq.CONFLATE, 1)
 
-        # 4. 主臂命令 (cmd_q)
-        self.cmd_sub = self.zmq_context.socket(zmq.SUB)
-        self.cmd_sub.connect(CMD_SUB_ADDRESS)
-        self.cmd_sub.setsockopt_string(zmq.SUBSCRIBE, "")
-        self.cmd_sub.setsockopt(zmq.CONFLATE, 1)
-        
-        self.get_logger().info(f"ZMQ Subscribed: State={STATE_SUB_ADDRESS}, Torque={TORQUE_SUB_ADDRESS}, Pose={POSE_SUB_ADDRESS}, Cmd={CMD_SUB_ADDRESS}")
+        self.get_logger().info(f"ZMQ Subscribed: State={STATE_SUB_ADDRESS}, Torque={TORQUE_SUB_ADDRESS}, Pose={POSE_SUB_ADDRESS}")
 
         # --- ROS 发布者 ---
         
@@ -63,12 +57,7 @@ class ZmqRosBridge(Node):
         # /franka/end_effector_pose: 4x4 矩阵展平
         self.pose_pub = self.create_publisher(Float64MultiArray, '/franka/end_effector_pose', 10)
 
-        # /franka/right/obs_franka_torque: 仅发布 effort (7 维)
-        self.torque_pub = self.create_publisher(JointState, '/franka/right/obs_franka_torque', 10)
 
-        # /leader/joint_states: 发布主臂命令关节位置
-        self.leader_joint_pub = self.create_publisher(JointState, '/leader/joint_states', 10)
-        
         # 启动接收线程
         self.thread = threading.Thread(target=self.receive_loop, daemon=True)
         self.thread.start()
@@ -79,7 +68,6 @@ class ZmqRosBridge(Node):
         poller.register(self.state_sub, zmq.POLLIN)
         poller.register(self.torque_sub, zmq.POLLIN)
         poller.register(self.pose_sub, zmq.POLLIN)
-        poller.register(self.cmd_sub, zmq.POLLIN)
         
         # 缓存数据以组合成一个 JointState
         current_q = None
@@ -125,19 +113,6 @@ class ZmqRosBridge(Node):
                         ros_msg.data = pose_mat.tolist()
                         self.pose_pub.publish(ros_msg)
 
-                # 4. 处理主臂命令 (cmd_q)
-                if self.cmd_sub in socks:
-                    msg = self.cmd_sub.recv(zmq.NOBLOCK)
-                    # 7个float32
-                    if len(msg) == 7 * 4:
-                        cmd_q = np.frombuffer(msg, dtype=np.float32)
-                        
-                        leader_msg = JointState()
-                        leader_msg.header.stamp = self.get_clock().now().to_msg()
-                        leader_msg.name = [f"leader_joint{i+1}" for i in range(7)]
-                        leader_msg.position = cmd_q.astype(float).tolist()
-                        self.leader_joint_pub.publish(leader_msg)
-
                 # 5. 如果凑齐了关节数据，发布 JointState
                 if current_q is not None and current_dq is not None:
                     # 如果没有收到力矩，补零
@@ -152,12 +127,6 @@ class ZmqRosBridge(Node):
                     joint_msg.effort = current_tau.astype(float).tolist()
                     
                     self.joint_pub.publish(joint_msg)
-
-                    # 单独发布力矩到 /franka/right/obs_franka_torque，供 ROS teleop 节点使用
-                    torque_msg = JointState()
-                    torque_msg.header.stamp = joint_msg.header.stamp
-                    torque_msg.effort = current_tau.astype(float).tolist()
-                    self.torque_pub.publish(torque_msg)
                     
                     # 清空缓存（或保留最新值？通常保留最新值更稳健，这里简单起见清空，
                     # 但考虑到 ZMQ 频率可能不同步，保留最新值可能更好。
