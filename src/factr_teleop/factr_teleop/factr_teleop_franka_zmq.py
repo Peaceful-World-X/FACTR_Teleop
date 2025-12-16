@@ -148,7 +148,16 @@ def main(args=None):
             rclpy.spin(factr_teleop_franka_zmq)
     except KeyboardInterrupt:
         factr_teleop_franka_zmq.get_logger().info("Keyboard interrupt received. Shutting down...")
-        factr_teleop_franka_zmq.shut_down()
+        try:
+            factr_teleop_franka_zmq.shut_down()
+        except Exception as e:
+            factr_teleop_franka_zmq.get_logger().warning(f"关闭过程中出现异常: {e}")
+    except Exception as e:
+        factr_teleop_franka_zmq.get_logger().error(f"运行时出现异常: {e}")
+        try:
+            factr_teleop_franka_zmq.shut_down()
+        except Exception as shutdown_e:
+            factr_teleop_franka_zmq.get_logger().warning(f"紧急关闭过程中出现异常: {shutdown_e}")
     finally:
         rclpy.shutdown()
 

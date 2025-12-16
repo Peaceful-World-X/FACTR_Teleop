@@ -236,8 +236,18 @@ class FACTRTeleop(Node, ABC):
 
     def shut_down(self):
         """节点关闭时，禁用 leader 机械臂与夹爪的扭矩输出。"""
-        self.set_leader_joint_torque(np.zeros(self.num_arm_joints), 0.0)
-        self.driver.set_torque_mode(False)
+        try:
+            self.get_logger().info("正在关闭FACTR遥操作，禁用扭矩输出...")
+            self.set_leader_joint_torque(np.zeros(self.num_arm_joints), 0.0)
+            self.driver.set_torque_mode(False)
+            self.get_logger().info("扭矩输出已禁用")
+        except Exception as e:
+            self.get_logger().warning(f"关闭过程中出现错误（这是正常的）: {e}")
+            # 即使出错也要尝试关闭驱动
+            try:
+                self.driver.set_torque_mode(False)
+            except Exception:
+                pass  # 忽略二次错误
 
     def get_leader_joint_states(self):
         """返回 leader 机械臂与夹爪当前的关节位置与速度，按 follower 的关节约定进行对齐。"""

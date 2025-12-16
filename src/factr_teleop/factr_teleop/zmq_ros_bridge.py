@@ -18,6 +18,7 @@ from std_msgs.msg import Float64MultiArray
 STATE_SUB_ADDRESS = "tcp://127.0.0.1:3099"
 TORQUE_SUB_ADDRESS = "tcp://127.0.0.1:3087"
 POSE_SUB_ADDRESS = "tcp://127.0.0.1:3098"
+CMD_SUB_ADDRESS = "tcp://127.0.0.1:3100"
 
 class ZmqRosBridge(Node):
     def __init__(self):
@@ -45,8 +46,14 @@ class ZmqRosBridge(Node):
         self.pose_sub.connect(POSE_SUB_ADDRESS)
         self.pose_sub.setsockopt_string(zmq.SUBSCRIBE, "")
         self.pose_sub.setsockopt(zmq.CONFLATE, 1)
+
+        # 4. 主臂命令 (cmd_q)
+        self.cmd_sub = self.zmq_context.socket(zmq.SUB)
+        self.cmd_sub.connect(CMD_SUB_ADDRESS)
+        self.cmd_sub.setsockopt_string(zmq.SUBSCRIBE, "")
+        self.cmd_sub.setsockopt(zmq.CONFLATE, 1)
         
-        self.get_logger().info(f"ZMQ Subscribed: State={STATE_SUB_ADDRESS}, Torque={TORQUE_SUB_ADDRESS}, Pose={POSE_SUB_ADDRESS}")
+        self.get_logger().info(f"ZMQ Subscribed: State={STATE_SUB_ADDRESS}, Torque={TORQUE_SUB_ADDRESS}, Pose={POSE_SUB_ADDRESS}, Cmd={CMD_SUB_ADDRESS}")
 
         # --- ROS 发布者 ---
         
@@ -58,6 +65,9 @@ class ZmqRosBridge(Node):
 
         # /franka/right/obs_franka_torque: 仅发布 effort (7 维)
         self.torque_pub = self.create_publisher(JointState, '/franka/right/obs_franka_torque', 10)
+
+        # /leader/joint_states: 发布主臂命令关节位置
+        self.leader_joint_pub = self.create_publisher(JointState, '/leader/joint_states', 10)
         
         # 启动接收线程
         self.thread = threading.Thread(target=self.receive_loop, daemon=True)
@@ -69,6 +79,7 @@ class ZmqRosBridge(Node):
         poller.register(self.state_sub, zmq.POLLIN)
         poller.register(self.torque_sub, zmq.POLLIN)
         poller.register(self.pose_sub, zmq.POLLIN)
+        poller.register(self.cmd_sub, zmq.POLLIN)
         
         # 缓存数据以组合成一个 JointState
         current_q = None
@@ -114,7 +125,20 @@ class ZmqRosBridge(Node):
                         ros_msg.data = pose_mat.tolist()
                         self.pose_pub.publish(ros_msg)
 
-                # 4. 如果凑齐了关节数据，发布 JointState
+                # 4. 处理主臂命令 (cmd_q)
+                if self.cmd_sub in socks:
+                    msg = self.cmd_sub.recv(zmq.NOBLOCK)
+                    # 7个float32
+                    if len(msg) == 7 * 4:
+                        cmd_q = np.frombuffer(msg, dtype=np.float32)
+                        
+                        leader_msg = JointState()
+                        leader_msg.header.stamp = self.get_clock().now().to_msg()
+                        leader_msg.name = [f"leader_joint{i+1}" for i in range(7)]
+                        leader_msg.position = cmd_q.astype(float).tolist()
+                        self.leader_joint_pub.publish(leader_msg)
+
+                # 5. 如果凑齐了关节数据，发布 JointState
                 if current_q is not None and current_dq is not None:
                     # 如果没有收到力矩，补零
                     if current_tau is None:

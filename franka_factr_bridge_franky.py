@@ -29,6 +29,8 @@ STATE_PUB_ADDRESS = "tcp://127.0.0.1:3099"
 TORQUE_PUB_ADDRESS = "tcp://127.0.0.1:3087"
 # 末端位姿发布（列主序 4x4 齐次矩阵，单位：米）
 POSE_PUB_ADDRESS = "tcp://127.0.0.1:3098"
+# 主臂命令发布（7 个 float32）
+CMD_PUB_ADDRESS = "tcp://127.0.0.1:3100"
 
 INITIAL_POSITION = np.array([
     0.00461679, 0.00581697, -0.00479847, -1.56943803,
@@ -40,7 +42,6 @@ STATE_PUB_FREQUENCY = 100.0  # Hz
 ZMQ_CONNECTION_WAIT_TIME = 2.0  # seconds
 CMD_RATE_LIMIT = 0.02  # 最小命令间隔 (50Hz)，防止过快命令导致的安全错误
 POSITION_FILTER_ALPHA = 0.3  # 位置滤波系数，0.2表示更强的平滑滤波，1.0表示无滤波
-MAX_POSITION_DELTA = 0.1     # 最大位置变化限制（弧度），防止剧烈运动
 
 # Franka Panda 关节限制 (弧度)
 JOINT_LIMITS = np.array([
@@ -76,6 +77,9 @@ class FrankaFactrBridge:
         self.state_publisher = None
         self.torque_publisher = None
         self.pose_publisher = None
+        self.cmd_publisher = None
+        self.lock = threading.Lock()  # 添加缺失的锁
+        self.last_cmd_target = np.zeros(7, dtype=np.float64)  # 最后发送的命令目标
         self.is_shutting_down = False  # 标记是否正在关闭
 
         # 设置 logger
@@ -106,9 +110,13 @@ class FrankaFactrBridge:
         self.pose_publisher = self.zmq_context.socket(zmq.PUB)
         self.pose_publisher.bind(POSE_PUB_ADDRESS)
 
+        # 主臂命令发布器：发布当前接收到的主臂关节角度
+        self.cmd_publisher = self.zmq_context.socket(zmq.PUB)
+        self.cmd_publisher.bind(CMD_PUB_ADDRESS)
+
         logger.info(f"ZMQ initialized: CMD={CMD_SUB_ADDRESS}, "
                    f"State={STATE_PUB_ADDRESS}, Torque={TORQUE_PUB_ADDRESS}, "
-                   f"Pose={POSE_PUB_ADDRESS}")
+                   f"Pose={POSE_PUB_ADDRESS}, CmdPub={CMD_PUB_ADDRESS}")
         time.sleep(ZMQ_CONNECTION_WAIT_TIME)  # Wait for subscribers to connect
 
     def handle_reflex_recovery(self):
@@ -196,8 +204,11 @@ class FrankaFactrBridge:
                     # 如果是 Affine 对象，使用 as_matrix() 方法
                     pose_mat = np.array(pose_raw.as_matrix(), dtype=np.float64).flatten(order='F')
                 elif hasattr(pose_raw, 'matrix'):
-                    # matrix 属性（通常是 numpy 数组）
-                    matrix_data = pose_raw.matrix
+                    # matrix 方法或属性（对于 Affine 对象，需要调用 matrix()）
+                    if callable(getattr(pose_raw, 'matrix')):
+                        matrix_data = pose_raw.matrix()
+                    else:
+                        matrix_data = pose_raw.matrix
                     pose_mat = np.array(matrix_data, dtype=np.float64).flatten(order='F')
                 else:
                     # 其他情况，尝试直接转换
@@ -235,6 +246,16 @@ class FrankaFactrBridge:
                         self.pose_publisher.send(pose_bytes, zmq.NOBLOCK)
                     except Exception as pose_e:
                         logger.debug(f"Pose publisher error: {pose_e}")
+
+                # 发布主臂命令：7 个 float32
+                if hasattr(self, 'cmd_publisher'):
+                    try:
+                        with self.lock:
+                            cmd_target = self.last_cmd_target.copy()
+                        cmd_bytes = cmd_target.astype(np.float32).tobytes()
+                        self.cmd_publisher.send(cmd_bytes, zmq.NOBLOCK)
+                    except Exception as cmd_e:
+                        logger.debug(f"Cmd publisher error: {cmd_e}")
 
                 # Frequency control
                 elapsed = time.time() - start_time
@@ -300,24 +321,40 @@ class FrankaFactrBridge:
                             else:
                                 # 指数移动平均滤波
                                 filtered_target = POSITION_FILTER_ALPHA * target + (1 - POSITION_FILTER_ALPHA) * last_filtered_position
-
-                            # 检查位置变化是否过大
-                            if last_filtered_position is not None:
-                                position_delta = np.abs(filtered_target - last_filtered_position)
-                                if np.any(position_delta > MAX_POSITION_DELTA):
-                                    logger.warning(f"位置变化过大，已跳过: max_delta={np.max(position_delta):.3f}")
-                                    continue
-
                             last_filtered_position = filtered_target.copy()
+
+                            with self.lock:
+                                self.last_cmd_target = filtered_target.copy()
 
                             try:
                                 motion = JointMotion(filtered_target.tolist())
                                 # 异步下发控制点，底层会平滑执行
                                 self.robot.move(motion, asynchronous=True)
                                 last_cmd_time = current_time
-                                
+
                             except Exception as motion_e:
-                                logger.error(f"运动命令执行失败: {motion_e}")
+                                motion_error_msg = str(motion_e)
+                                logger.error(f"运动命令执行失败: {motion_error_msg}")
+
+                                # 检查是否为Reflex相关错误，立即尝试恢复
+                                if "Reflex" in motion_error_msg or "motion aborted by reflex" in motion_error_msg:
+                                    logger.warning("检测到Reflex状态，尝试恢复...")
+                                    if not self.handle_reflex_recovery():
+                                        logger.error("Reflex恢复失败，请手动重启机器人")
+                                        time.sleep(5.0)  # 等待更长时间
+                                    else:
+                                        logger.info("Reflex恢复成功，继续控制")
+                                else:
+                                    # 其他错误，尝试标准恢复
+                                    try:
+                                        if hasattr(self.robot, 'automatic_error_recovery'):
+                                            self.robot.automatic_error_recovery()
+                                            logger.info("尝试自动错误恢复")
+                                    except Exception as rec_e:
+                                        logger.warning(f"标准恢复失败: {rec_e}")
+
+                                # 发生错误时暂停一段时间，避免连续错误
+                                time.sleep(0.1)
                         # else:
                         # 命令过于频繁，静默跳过（避免日志过多）
                 except zmq.Again:

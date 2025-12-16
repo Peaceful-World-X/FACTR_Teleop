@@ -217,6 +217,11 @@ class DataRecord(Node):
                     frame_data["leader_gripper"] = state_msg.position[0]
                     frame_data["franka_gripper"] = state_msg.position[1]
 
+            # 特殊处理：如果是主臂命令，提取关节角度
+            if "/leader/joint_states" in topic:
+                if hasattr(state_msg, 'position') and state_msg.position:
+                    frame_data["leader_joint_pos"] = np.array(state_msg.position, dtype=np.float64)
+
         self.current_episode_data.append(frame_data)
         self.current_frame_id += 1
 
@@ -276,6 +281,13 @@ class DataRecord(Node):
             elif key == keyboard.Key.delete:
                 if not self.recording:
                     self.delete_last_episode()
+            elif hasattr(key, 'char') and key.char == 'q':
+                # 添加 'q' 键退出功能
+                self.get_logger().info("收到退出信号，正在停止...")
+                if self.recording:
+                    self.stop_recording()
+                self.listener.stop()
+                rclpy.shutdown()
         except AttributeError:
             pass
 
