@@ -259,12 +259,12 @@ class DataRecord(Node):
         self.current_episode_data = []
         self.current_frame_id = 0
         self.recording = True
-        self.get_logger().info(f"Started recording: {episode_name}")
+        self.get_logger().info(f"✅ ✅ ✅Started recording: {episode_name}")
 
     def stop_recording(self):
         self.recording = False
         if not self.current_episode_data:
-            self.get_logger().warn("No data recorded!")
+            self.get_logger().warn("⚠️ ⚠️ ⚠️ No data recorded!")
             # 清理空目录
             if self.current_episode_dir and self.current_episode_dir.exists():
                 shutil.rmtree(self.current_episode_dir)
@@ -275,7 +275,7 @@ class DataRecord(Node):
         with open(pkl_path, 'wb') as f:
             pickle.dump(self.current_episode_data, f, protocol=pickle.HIGHEST_PROTOCOL)
             
-        self.get_logger().info(f"Saved {len(self.current_episode_data)} frames to {pkl_path}")
+        self.get_logger().info(f"❌ ❌ ❌ Saved {len(self.current_episode_data)} frames to {pkl_path}")
         self.current_episode_dir = None
         self.current_episode_data = []
 

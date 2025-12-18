@@ -76,6 +76,9 @@ def generate_launch_description():
             {"control_mode": "relative"},  # "absolute" 或 "relative"，默认: "absolute"
             {"leader_gripper_min_rad": 0.0},   # Leader 夹爪最小位置（弧度），默认: 0.0
             {"leader_gripper_max_rad": 0.8},   # Leader 夹爪最大位置（弧度），默认: 0.8
+                # 通过 launch 参数设置夹爪默认速度/力度（百分比 0-100）
+                {"default_speed_percent": 30.0},
+                {"default_force_percent": 20.0},
         ]
     )
     

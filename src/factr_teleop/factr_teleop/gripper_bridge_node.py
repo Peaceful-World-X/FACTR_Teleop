@@ -573,13 +573,17 @@ class RobotiqGripperHardware:
         reg_force = self._map_to_register(
             force_percent, 
             0.0, 100.0, 
-            REG_FORCE_MIN, REG_FORCE_MAX
+            # 注意：_map_to_register 的 reg_open 参数对应于物理最大值时的寄存器值，
+            # 因此传入 REG_FORCE_MAX (对应 100%) 作为 reg_open，REG_FORCE_MIN 作为 reg_closed，
+            # 保证 force_percent 从 0->100 映射为寄存器从 0->255（非反向）。
+            REG_FORCE_MAX, REG_FORCE_MIN
         )
         
         reg_speed = self._map_to_register(
             speed_percent, 
             0.0, 100.0, 
-            REG_SPEED_MIN, REG_SPEED_MAX
+            # 同上：确保 speed_percent 越大，寄存器值越大（非反向）
+            REG_SPEED_MAX, REG_SPEED_MIN
         )
 
         with self.lock:
@@ -604,6 +608,9 @@ class GripperBridgeNode(Node):
         self.declare_parameter('leader_gripper_max_rad', 0.8)  # Leader 夹爪最大位置（弧度）
         self.declare_parameter('skip_init', False)  # 诊断用：跳过初始化
         self.declare_parameter('robot_name', 'right') # 机器人名称 (left/right)
+        # 默认速度/力度（百分比 0-100）
+        self.declare_parameter('default_speed_percent', 100.0)
+        self.declare_parameter('default_force_percent', 50.0)
 
         port = self.get_parameter('port').value
         baudrate = self.get_parameter('baudrate').value
@@ -615,6 +622,8 @@ class GripperBridgeNode(Node):
         self.leader_gripper_max_rad = self.get_parameter('leader_gripper_max_rad').value
         self.skip_init = self.get_parameter('skip_init').value
         self.robot_name = self.get_parameter('robot_name').value
+        self.default_speed_percent = float(self.get_parameter('default_speed_percent').value)
+        self.default_force_percent = float(self.get_parameter('default_force_percent').value)
 
         self.get_logger().info(f"初始化夹爪桥接节点，端口: {port} (ID: {slave_id}, 波特率: {baudrate})...")
         self.get_logger().info(f"控制模式: {self.control_mode}")
@@ -675,6 +684,9 @@ class GripperBridgeNode(Node):
         self.is_activated = False  # 跟踪激活状态
         self.has_received_command = False  # 是否已收到第一个命令
         self.leader_ratio = 0.0  # 0=闭合, 1=张开
+        # 速度/力度：以百分比（0-100）存储，初始为参数值
+        self.last_speed_percent = float(self.default_speed_percent)
+        self.last_force_percent = float(self.default_force_percent)
 
     def cmd_callback(self, msg: JointState):
         """夹爪命令回调函数。
@@ -734,10 +746,33 @@ class GripperBridgeNode(Node):
                 target_m = WIDTH_MIN + ratio * (WIDTH_MAX - WIDTH_MIN)
                 leader_ratio = max(0.0, min(1.0, ratio))
             
+            # 解析可选的速度/力度指示（优先使用 msg.velocity/msg.effort）
+            speed_percent = float(self.default_speed_percent)
+            force_percent = float(self.default_force_percent)
+            if hasattr(msg, 'velocity') and msg.velocity:
+                try:
+                    v = float(msg.velocity[0])
+                    # 如果用户使用 0-1 的归一化值，则转为百分比
+                    if abs(v) <= 1.0:
+                        v = v * 100.0
+                    speed_percent = max(0.0, min(100.0, v))
+                except Exception:
+                    pass
+            if hasattr(msg, 'effort') and msg.effort:
+                try:
+                    f = float(msg.effort[0])
+                    if abs(f) <= 1.0:
+                        f = f * 100.0
+                    force_percent = max(0.0, min(100.0, f))
+                except Exception:
+                    pass
+
             with self.lock:
                 self.last_target_pos = target_m
                 self.has_received_command = True  # 标记已收到命令
                 self.leader_ratio = leader_ratio
+                self.last_speed_percent = speed_percent
+                self.last_force_percent = force_percent
                 
         except Exception as e:
             self.get_logger().warning(f"收到无效命令: {e}")
@@ -841,8 +876,8 @@ class GripperBridgeNode(Node):
             # 注意: Robotiq 规格说明命令在寄存器改变时处理。
             # 持续重写通常没问题，但会消耗带宽。
             try:
-                # 默认力度/速度
-                self.hw.set_target(target, force_percent=50.0, speed_percent=100.0)
+                # 使用从命令中读取/默认参数指定的力度和速度
+                self.hw.set_target(target, force_percent=self.last_force_percent, speed_percent=self.last_speed_percent)
             except Exception as e:
                 self.get_logger().warning(f"写入命令时出错: {e}")
         elif target is not None and not self.is_activated:
