@@ -41,7 +41,8 @@ def generate_launch_description():
                     "/realsense/back/im",  # 后摄像头
                 ]
             },
-            {"dataset_name": "test"}
+            {"dataset_name": "diemukuai"},
+            {"language_instruction": "002"}
         ]
     )
     # 1. 遥操节点 (factr_teleop_franka)
@@ -90,7 +91,7 @@ def generate_launch_description():
         output='screen',
         emulate_tty=True,
         parameters=[
-            {"serial": "409122274290"},
+            {"serial": "409122274073"},
             {"name": "front"},
         ]
     )

@@ -57,7 +57,8 @@ class DataRecord(Node):
         # 参数声明
         self.declare_parameter('dataset_name', "")
         self.dataset_name = self.get_parameter('dataset_name').value
-        
+        self.declare_parameter('language_instruction', "")
+        self.language_instruction = self.get_parameter('language_instruction').value
         # 相机话题列表：第一个被视为主触发源
         # 例如：['/realsense/front/im', '/realsense/side/im']
         self.declare_parameter('camera_topics', [])
@@ -185,6 +186,7 @@ class DataRecord(Node):
 
         # 4. 解析并组装状态数据
         frame_data = {
+            "language_instruction": self.language_instruction,
             "frame_id": frame_id,
             "images": saved_img_paths,
         }
