@@ -1,6 +1,6 @@
 # 个人搭建框架部署与实验
 
-## 相关配置
+## 一、相关配置
 ### 网络配置
 连接网线后以太网连接IPv4的地址需要设置为
 ```bash
@@ -19,7 +19,7 @@ source install/setup.bash
 ```bash
 conda activate franka
 ```
-## 遥操示例
+## 二、遥操数采
 
 **先按照前面的环境配置进入环境**
 - **分别打开**
@@ -47,13 +47,60 @@ chmod +x run.sh
 
 - 若factr leader arm出现剧烈不规则运动，即使拔除电源即可
 
-## 编译和构建
+## 三、回放示例
+
+**回放程序为[action_playback.py](src/factr_teleop/factr_teleop/action_playback.py),提供了从采集的数据文件中回放Franka机械臂动作的功能。**
+
+数据文件应为 pickle 格式，包含帧数据序列。每一帧应包含：
+
+- **关节位置数据**：`/factr_teleop/right/cmd_franka_pos` topic，包含 `position` 字段（7个关节角度）
+- **夹爪命令**：`leader_gripper` 字段（夹爪开度，0.0-1.0之间，0=完全关闭，1=完全张开）
+- **时间控制**：基于固定 30Hz 帧率
+
+### 使用方法
+
+#### 基本用法
+
+```bash
+cd /home/cytoderm/projects/FACTR_Teleop
+python src/factr_teleop/factr_teleop/action_playback.py --data_path /path/to/data.pkl
+```
+
+#### 参数说明
+
+- `--data_path`, `-d`: **必需** data.pkl 文件路径
+- `--speed`, `-s`: 回放速度倍数 (默认: 1.0)
+  - `0.5`: 慢放一半速度
+  - `2.0`: 快放两倍速度
+- `--zmq_address`, `-z`: ZMQ 命令发布地址 (默认: `tcp://127.0.0.1:2098`)
+- `--gripper_topic`, `-g`: ROS 夹爪命令话题 (默认: `/factr_teleop/franka/cmd_gripper_pos`)
+- `--verbose`, `-v`: 启用详细输出
+- `--interactive`, `-i`: 启用交互模式（支持键盘控制）
+
+启用 `--interactive` 模式后，可以使用键盘控制回放：
+
+- **p**: 暂停/恢复回放
+- **q**: 退出回放
+
+### 必需组件
+
+1. **Franka 桥接程序运行中**:
+   ```bash
+   python franka_factr_bridge_franky.py
+   ```
+
+2. **夹爪桥接节点运行中** (如果需要控制夹爪):
+   ```bash
+   ros2 run factr_teleop gripper_bridge_node
+   ```
+
+## 四、编译和构建
 对节点进行更改后可能需要对该包进行重新编译
 ```bash
 colcon build --packages-select factr_teleop
 ```
-7分 40秒
-## 相关节点和程序
+
+## 五、相关节点和程序
 ### 主要程序
 - **基于franky库的franka FCI和主机ZMQ的桥接程序** [franka_factr_bridge_franky.py](franka_factr_bridge_franky.py)
     1. ZMQpub：发布状态：14 个 float（7 个位置 + 7 个速度）|发布力矩：7 个 float | 发布位姿16 个 float64
@@ -82,7 +129,7 @@ colcon build --packages-select factr_teleop
 
 
 
-## 策略部署
+## 六、策略部署
 
 ROS2 中提供了一个示例的部署脚本，用于将已有的策略部署到franka上。在我们的实现中，部署启动文件可以按以下方式调用： 
 ```bash
@@ -90,16 +137,12 @@ ros2 launch factr_teleop/launch/rollout.py
 ```
 
 
-## TODO
-- **摄像头开发**
-- **数采流程**
-- 关节5关节飘的问题
+## 七、TODO
 - 一键启动的稳定性，有时候退出后会存在factr乱动的情况
-- （已解决）程序关闭后主动关闭终端（或改成后台运行），结束后kill
-- 夹爪速度过慢 无力反馈
+- 回放，franka控制接口
 
 
-## 问题
+## 八、问题
 
 Topic 名称: /franka/joint_states
 消息类型: sensor_msgs.msg.JointState

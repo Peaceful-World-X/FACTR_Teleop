@@ -37,11 +37,11 @@ INITIAL_POSITION = np.array([
     0.00456447, 1.56894485, 1.56894485
 ], dtype=np.float64)
 
-RELATIVE_DYNAMICS_FACTOR = 0.1
+RELATIVE_DYNAMICS_FACTOR = 0.2  #控制机器人运动的 速度、加速度和力矩 的缩放系数
 STATE_PUB_FREQUENCY = 100.0  # Hz
 ZMQ_CONNECTION_WAIT_TIME = 2.0  # seconds
 CMD_RATE_LIMIT = 0.02  # 最小命令间隔 (50Hz)，防止过快命令导致的安全错误
-POSITION_FILTER_ALPHA = 0.3  # 位置滤波系数，0.2表示更强的平滑滤波，1.0表示无滤波
+POSITION_FILTER_ALPHA = 0.3 # 位置滤波系数，0.2表示更强的平滑滤波，1.0表示无滤波
 
 # Franka Panda 关节限制 (弧度)
 JOINT_LIMITS = np.array([
@@ -132,7 +132,7 @@ class FrankaFactrBridge:
                 logger.info("尝试从错误中恢复")
 
             # 等待恢复完成
-            time.sleep(2.0)
+            time.sleep(0.5)
 
             # 验证恢复状态
             try:
@@ -280,18 +280,27 @@ class FrankaFactrBridge:
         logger.info(f"Control loop started (dynamics factor: {RELATIVE_DYNAMICS_FACTOR})")
 
         # 清空 ZMQ 缓冲区（消费掉任何遗留的命令）
+        cleared_count = 0
         try:
             while True:
                 self.cmd_subscriber.recv(zmq.NOBLOCK)
+                cleared_count += 1
         except zmq.Again:
+            print(f"DEBUG: 清空了 {cleared_count} 条遗留消息")
             pass
 
         # Main control loop
         last_cmd_time = 0
         last_filtered_position = None  # 上一次滤波后的位置
+        loop_count = 0
 
         while self.running and not self.is_shutting_down:
+            loop_count += 1
+            # if loop_count % 100 == 0:  # 每100次循环打印一次状态
+            #    print(f"DEBUG: 控制循环运行中... 循环次数: {loop_count}")
+
             try:
+                
                 current_time = time.time()
                 try:
                     message = self.cmd_subscriber.recv(zmq.NOBLOCK)
@@ -322,6 +331,7 @@ class FrankaFactrBridge:
                                 # 指数移动平均滤波
                                 filtered_target = POSITION_FILTER_ALPHA * target + (1 - POSITION_FILTER_ALPHA) * last_filtered_position
                             last_filtered_position = filtered_target.copy()
+
 
                             with self.lock:
                                 self.last_cmd_target = filtered_target.copy()

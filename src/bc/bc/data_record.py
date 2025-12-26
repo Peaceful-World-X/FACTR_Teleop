@@ -196,7 +196,7 @@ class DataRecord(Node):
         # 假设话题名如下（需根据您的 launch 文件确认）：
         # Franka State: /franka/joint_states
         # Gripper: /bridge/obs_gripper_state
-        # FACTR: /factr/joint_states (假设)
+        # FACTR: /factr/joint_states 
         
         for topic, state_msg in snapshot.items():
 
